@@ -1,0 +1,13 @@
+[package]
+name = "prog_fund_3_things"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+criterion = "0.8.2"
+tinyset = "0.5.2"
+tinyvec = "1.10.0"
+
+[[bench]]
+name = "eight_queens"
+harness = false
