@@ -192,22 +192,24 @@ pub mod with_benchset {
 }
 
 pub mod with_benchset_unsafe_opts {
-    use std::hint::assert_unchecked;
+    use std::{hint::assert_unchecked, mem::MaybeUninit};
 
     use crate::eight_queens::{BoardIdx, BoardSet};
 
     pub fn eight_queens_problem() -> [BoardIdx; 8] {
-        let res = eight_queens_problem_inner(BoardSet::all(), 8).unwrap();
-        res.try_into().unwrap()
+        let mut res = [MaybeUninit::uninit(); 8];
+        eight_queens_problem_inner(BoardSet::all(), 8, &mut res).unwrap();
+        std::array::from_fn(|i| unsafe { res[i].assume_init() })
     }
 
     /// Returns `Some(_)` with a list of `to_place` queens, or `None` if it failed
     fn eight_queens_problem_inner(
         available: BoardSet,
         queens_remaining: usize,
-    ) -> Option<Vec<BoardIdx>> {
+        solution: &mut [MaybeUninit<BoardIdx>; 8],
+    ) -> Option<()> {
         if queens_remaining == 0 {
-            return Some(vec![]);
+            return Some(());
         }
 
         for to_place in available.iter() {
@@ -221,18 +223,15 @@ pub mod with_benchset_unsafe_opts {
                 new_available.remove(i);
             }
 
-            if let Some(mut solution) =
-                eight_queens_problem_inner(new_available, queens_remaining - 1)
+            if let Some(()) =
+                eight_queens_problem_inner(new_available, queens_remaining - 1, solution)
             {
-                if solution.is_empty() {
-                    solution.reserve_exact(8);
-                }
                 unsafe {
-                    assert_unchecked(solution.capacity() == 8);
-                    assert_unchecked(solution.len() < 8);
+                    solution
+                        .get_unchecked_mut(queens_remaining - 1)
+                        .write(to_place);
                 }
-                solution.push(to_place);
-                return Some(solution);
+                return Some(());
             }
         }
 
