@@ -1,17 +1,122 @@
-use std::{array, collections::HashSet, iter};
+use std::{
+    array,
+    collections::HashSet,
+    hash::{BuildHasher, Hasher},
+    hint::{assert_unchecked, unreachable_unchecked},
+    iter,
+};
+
+#[macro_export]
+macro_rules! use_with_all {
+    (with $name:ident; $($expr:tt)*) => {
+        {
+            #[allow(unused)] use $crate::eight_queens::$name as imp;
+            #[allow(unused)] const IMP_NAME: &'static str = stringify!($name);
+            $($expr)*
+        }
+    };
+    ($($expr:tt)*) => {{
+        use_with_all!(with with_boardset; $($expr)*);
+        use_with_all!(with with_boardset_bitwise_remove_col_row; $($expr)*);
+        use_with_all!(with with_boardset_unsafe_opts; $($expr)*);
+        use_with_all!(with with_boardset_tinyvec; $($expr)*);
+        use_with_all!(with with_tinyset; $($expr)*);
+        use_with_all!(with with_hashset; $($expr)*);
+        use_with_all!(with with_hashset_cached_allocs; $($expr)*);
+        use_with_all!(with with_fxhashset; $($expr)*);
+        use_with_all!(with with_specialhashset; $($expr)*);
+        use_with_all!(with with_btreeset; $($expr)*);
+        use_with_all!(with with_vec; $($expr)*);
+        use_with_all!(with with_iter; $($expr)*);
+        use_with_all!(with with_iter_boardset; $($expr)*);
+        use_with_all!(with with_iter_boardset_cursor; $($expr)*);
+    }};
+}
 
 pub fn start() {
+    // _display_removals();
+
     println!("Queens:\n",);
-    let res = with_benchset::eight_queens_problem();
+    // let res = with_boardset::eight_queens_problem();
+    // let res = with_iter_boardset::eight_queens_problem();
+    let res = with_iter_boardset_cursor::eight_queens_problem();
     BoardIdx::display_board(res);
+}
+
+fn _display_removals() {
+    for col in 0..8 {
+        let mut board = BoardSet::all();
+        board.remove_col(col);
+        println!("col{col}:");
+        BoardIdx::display_board(board.iter());
+        println!();
+    }
+
+    for row in 0..8 {
+        let mut board = BoardSet::all();
+        board.remove_row(row);
+        println!("row{row}:");
+        BoardIdx::display_board(board.iter());
+        println!();
+    }
+
+    for col in 0..8 {
+        for row in 0..8 {
+            let mut board = BoardSet::all();
+            BoardIdx { col, row }
+                .iter_diagonals()
+                .into_iter()
+                .for_each(|i| board.remove(i));
+
+            println!("diag({col},{row}):");
+            BoardIdx::display_board(board.iter());
+            println!();
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct SpecialHashBuildHasher;
+impl BuildHasher for SpecialHashBuildHasher {
+    type Hasher = SpecialHasher;
+
+    #[inline(always)]
+    fn build_hasher(&self) -> Self::Hasher {
+        SpecialHasher(0)
+    }
+}
+
+struct SpecialHasher(u64);
+impl Hasher for SpecialHasher {
+    #[inline(always)]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    #[inline(always)]
+    fn write(&mut self, bytes: &[u8]) {
+        let &[col, row] = bytes else {
+            unreachable!("Should only be called by BoardIdx::hash")
+        };
+        self.0 = (col * 8 + row) as u64;
+    }
 }
 
 /// A subset of the 8x8 chess board
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct BoardSet {
     /// A flattened bit-set of the board values
+    ///
+    /// The flattening scheme is in row-major order
     inner: u64,
 }
+
+impl Default for BoardSet {
+    fn default() -> Self {
+        Self::none()
+    }
+}
+
 impl BoardSet {
     const fn none() -> Self {
         Self { inner: 0 }
@@ -58,29 +163,57 @@ impl BoardSet {
     }
 
     #[inline(always)]
+    const fn remove_col(&mut self, col: u8) {
+        assert!(col < 8);
+        let mask: u64 = 0xff; // The first 8 bits
+        self.inner &= !(mask << col * 8);
+    }
+
+    #[inline(always)]
+    const fn remove_row(&mut self, row: u8) {
+        assert!(row < 8);
+        let mask: u64 = 0x101010101010101; // Every 8th bit, starting at bit 0
+        self.inner &= !(mask << row);
+    }
+
+    #[inline(always)]
     const fn contains_idx(&self, idx: u8) -> bool {
         (self.inner >> idx) & 1 == 1
     }
 
     fn iter(self) -> impl IntoIterator<Item = BoardIdx> {
-        (0u8..64).filter_map(move |idx| {
-            self.contains_idx(idx)
-                .then_some(Self::idx_to_board_idx(idx))
-        })
+        (0u8..64)
+            .filter_map(move |idx| {
+                self.contains_idx(idx)
+                    .then_some(Self::idx_to_board_idx(idx))
+            })
+            .inspect(|i| {
+                // SAFETY: We're being safe lol
+                unsafe {
+                    assert_unchecked(i.col < 8);
+                    assert_unchecked(i.row < 8);
+                }
+            })
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BoardIdx {
     col: u8,
     row: u8,
 }
 
+impl std::hash::Hash for BoardIdx {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write(&[self.col, self.row]);
+    }
+}
+
 impl BoardIdx {
     pub fn display_board(on: impl IntoIterator<Item = BoardIdx>) {
         let active = on.into_iter().collect::<HashSet<BoardIdx>>();
-        for col in 0..8 {
-            for row in 0..8 {
+        for row in 0..8 {
+            for col in 0..8 {
                 if active.contains(&BoardIdx { col, row }) {
                     print!("# ");
                 } else {
@@ -95,6 +228,7 @@ impl BoardIdx {
         self.col < 8 && self.row < 8
     }
 
+    #[inline]
     fn iter_col(self) -> [BoardIdx; 8] {
         array::from_fn(|row| BoardIdx {
             col: self.col,
@@ -102,6 +236,7 @@ impl BoardIdx {
         })
     }
 
+    #[inline]
     fn iter_row(self) -> [BoardIdx; 8] {
         array::from_fn(|col| BoardIdx {
             col: col as u8,
@@ -109,6 +244,7 @@ impl BoardIdx {
         })
     }
 
+    #[inline]
     fn iter_diagonals(self) -> impl IntoIterator<Item = BoardIdx> {
         let mut top_left = {
             let advance_by = self.col.min(self.row);
@@ -127,7 +263,7 @@ impl BoardIdx {
         });
 
         let mut top_right = {
-            let advance_by = (8 - self.col).min(self.row);
+            let advance_by = (7 - self.col).min(self.row);
             BoardIdx {
                 col: self.col + advance_by,
                 row: self.row - advance_by,
@@ -146,7 +282,7 @@ impl BoardIdx {
     }
 }
 
-pub mod with_benchset {
+pub mod with_boardset_bitwise_remove_col_row {
     use crate::eight_queens::{BoardIdx, BoardSet};
 
     pub fn eight_queens_problem() -> [BoardIdx; 8] {
@@ -165,14 +301,12 @@ pub mod with_benchset {
 
         for to_place in available.iter() {
             let mut new_available = available.clone();
-            for i in to_place
-                .iter_col()
+            new_available.remove_col(to_place.col);
+            new_available.remove_row(to_place.row);
+            to_place
+                .iter_diagonals()
                 .into_iter()
-                .chain(to_place.iter_row())
-                .chain(to_place.iter_diagonals())
-            {
-                new_available.remove(i);
-            }
+                .for_each(|i| new_available.remove(i));
 
             if let Some(mut solution) =
                 eight_queens_problem_inner(new_available, queens_remaining - 1)
@@ -182,6 +316,7 @@ pub mod with_benchset {
                 }
                 assert!(solution.capacity() == 8);
                 assert!(solution.len() < 8);
+
                 solution.push(to_place);
                 return Some(solution);
             }
@@ -191,25 +326,67 @@ pub mod with_benchset {
     }
 }
 
-pub mod with_benchset_unsafe_opts {
-    use std::{hint::assert_unchecked, mem::MaybeUninit};
-
+pub mod with_boardset {
     use crate::eight_queens::{BoardIdx, BoardSet};
 
     pub fn eight_queens_problem() -> [BoardIdx; 8] {
-        let mut res = [MaybeUninit::uninit(); 8];
-        eight_queens_problem_inner(BoardSet::all(), 8, &mut res).unwrap();
-        std::array::from_fn(|i| unsafe { res[i].assume_init() })
+        let res = eight_queens_problem_inner(BoardSet::all(), 8).unwrap();
+        res.try_into().unwrap()
     }
 
     /// Returns `Some(_)` with a list of `to_place` queens, or `None` if it failed
     fn eight_queens_problem_inner(
         available: BoardSet,
         queens_remaining: usize,
-        solution: &mut [MaybeUninit<BoardIdx>; 8],
-    ) -> Option<()> {
+    ) -> Option<Vec<BoardIdx>> {
         if queens_remaining == 0 {
-            return Some(());
+            return Some(vec![]);
+        }
+
+        for to_place in available.iter() {
+            let mut new_available = available.clone();
+            to_place
+                .iter_diagonals()
+                .into_iter()
+                .chain(to_place.iter_col())
+                .chain(to_place.iter_row())
+                .for_each(|i| new_available.remove(i));
+
+            if let Some(mut solution) =
+                eight_queens_problem_inner(new_available, queens_remaining - 1)
+            {
+                if solution.is_empty() {
+                    solution.reserve_exact(8);
+                }
+                assert!(solution.capacity() == 8);
+                assert!(solution.len() < 8);
+
+                solution.push(to_place);
+                return Some(solution);
+            }
+        }
+
+        None
+    }
+}
+
+pub mod with_boardset_unsafe_opts {
+    use std::mem::MaybeUninit;
+
+    use crate::eight_queens::{BoardIdx, BoardSet};
+
+    pub fn eight_queens_problem() -> [BoardIdx; 8] {
+        let res = eight_queens_problem_inner(BoardSet::all(), 0).unwrap();
+        std::array::from_fn(|i| unsafe { res[i].assume_init() })
+    }
+
+    /// Returns `Some(_)` with a list of `to_place` queens, or `None` if it failed
+    fn eight_queens_problem_inner(
+        available: BoardSet,
+        idx: usize,
+    ) -> Option<[MaybeUninit<BoardIdx>; 8]> {
+        if idx >= 8 {
+            return Some([MaybeUninit::uninit(); 8]);
         }
 
         for to_place in available.iter() {
@@ -223,15 +400,11 @@ pub mod with_benchset_unsafe_opts {
                 new_available.remove(i);
             }
 
-            if let Some(()) =
-                eight_queens_problem_inner(new_available, queens_remaining - 1, solution)
-            {
+            if let Some(mut solution) = eight_queens_problem_inner(new_available, idx + 1) {
                 unsafe {
-                    solution
-                        .get_unchecked_mut(queens_remaining - 1)
-                        .write(to_place);
+                    solution.get_unchecked_mut(idx).write(to_place);
                 }
-                return Some(());
+                return Some(solution);
             }
         }
 
@@ -239,7 +412,7 @@ pub mod with_benchset_unsafe_opts {
     }
 }
 
-pub mod with_benchset_tinyvec {
+pub mod with_boardset_tinyvec {
     use tinyvec::ArrayVec;
 
     use crate::eight_queens::{BoardIdx, BoardSet};
@@ -378,5 +551,386 @@ pub mod with_hashset {
         }
 
         None
+    }
+}
+
+pub mod with_hashset_cached_allocs {
+    use std::collections::HashSet;
+
+    use crate::eight_queens::{BoardIdx, BoardSet};
+
+    pub fn eight_queens_problem() -> [BoardIdx; 8] {
+        let res =
+            eight_queens_problem_inner(&HashSet::from_iter(BoardSet::all().iter()), 8).unwrap();
+        res.try_into().unwrap()
+    }
+
+    /// Returns `Some(_)` with a list of `to_place` queens, or `None` if it failed
+    fn eight_queens_problem_inner(
+        available: &HashSet<BoardIdx>,
+        queens_remaining: usize,
+    ) -> Option<Vec<BoardIdx>> {
+        if queens_remaining == 0 {
+            return Some(vec![]);
+        }
+
+        let mut new_available = HashSet::with_capacity(available.len());
+        for to_place in available.iter().copied() {
+            new_available.clone_from(available);
+            for i in to_place
+                .iter_col()
+                .into_iter()
+                .chain(to_place.iter_row())
+                .chain(to_place.iter_diagonals())
+            {
+                new_available.remove(&i);
+            }
+
+            if let Some(mut solution) =
+                eight_queens_problem_inner(&new_available, queens_remaining - 1)
+            {
+                solution.push(to_place);
+                return Some(solution);
+            }
+        }
+
+        None
+    }
+}
+
+pub mod with_fxhashset {
+    use fxhash::FxHashSet;
+
+    use crate::eight_queens::{BoardIdx, BoardSet};
+
+    pub fn eight_queens_problem() -> [BoardIdx; 8] {
+        let res =
+            eight_queens_problem_inner(&FxHashSet::from_iter(BoardSet::all().iter()), 8).unwrap();
+        res.try_into().unwrap()
+    }
+
+    /// Returns `Some(_)` with a list of `to_place` queens, or `None` if it failed
+    fn eight_queens_problem_inner(
+        available: &FxHashSet<BoardIdx>,
+        queens_remaining: usize,
+    ) -> Option<Vec<BoardIdx>> {
+        if queens_remaining == 0 {
+            return Some(vec![]);
+        }
+
+        for to_place in available.iter().copied() {
+            let mut new_available = available.clone();
+            for i in to_place
+                .iter_col()
+                .into_iter()
+                .chain(to_place.iter_row())
+                .chain(to_place.iter_diagonals())
+            {
+                new_available.remove(&i);
+            }
+
+            if let Some(mut solution) =
+                eight_queens_problem_inner(&new_available, queens_remaining - 1)
+            {
+                solution.push(to_place);
+                return Some(solution);
+            }
+        }
+
+        None
+    }
+}
+
+pub mod with_specialhashset {
+    use std::collections::HashSet;
+
+    use crate::eight_queens::{BoardIdx, BoardSet, SpecialHashBuildHasher};
+
+    pub fn eight_queens_problem() -> [BoardIdx; 8] {
+        let res =
+            eight_queens_problem_inner(&HashSet::from_iter(BoardSet::all().iter()), 8).unwrap();
+        res.try_into().unwrap()
+    }
+
+    /// Returns `Some(_)` with a list of `to_place` queens, or `None` if it failed
+    fn eight_queens_problem_inner(
+        available: &HashSet<BoardIdx, SpecialHashBuildHasher>,
+        queens_remaining: usize,
+    ) -> Option<Vec<BoardIdx>> {
+        if queens_remaining == 0 {
+            return Some(vec![]);
+        }
+
+        for to_place in available.iter().copied() {
+            let mut new_available = available.clone();
+            for i in to_place
+                .iter_col()
+                .into_iter()
+                .chain(to_place.iter_row())
+                .chain(to_place.iter_diagonals())
+            {
+                new_available.remove(&i);
+            }
+
+            if let Some(mut solution) =
+                eight_queens_problem_inner(&new_available, queens_remaining - 1)
+            {
+                solution.push(to_place);
+                return Some(solution);
+            }
+        }
+
+        None
+    }
+}
+
+pub mod with_btreeset {
+    use std::collections::BTreeSet;
+
+    use crate::eight_queens::{BoardIdx, BoardSet};
+
+    pub fn eight_queens_problem() -> [BoardIdx; 8] {
+        let res =
+            eight_queens_problem_inner(&BTreeSet::from_iter(BoardSet::all().iter()), 8).unwrap();
+        res.try_into().unwrap()
+    }
+
+    /// Returns `Some(_)` with a list of `to_place` queens, or `None` if it failed
+    fn eight_queens_problem_inner(
+        available: &BTreeSet<BoardIdx>,
+        queens_remaining: usize,
+    ) -> Option<Vec<BoardIdx>> {
+        if queens_remaining == 0 {
+            return Some(vec![]);
+        }
+
+        for to_place in available.iter().copied() {
+            let mut new_available = available.clone();
+            for i in to_place
+                .iter_col()
+                .into_iter()
+                .chain(to_place.iter_row())
+                .chain(to_place.iter_diagonals())
+            {
+                new_available.remove(&i);
+            }
+
+            if let Some(mut solution) =
+                eight_queens_problem_inner(&new_available, queens_remaining - 1)
+            {
+                solution.push(to_place);
+                return Some(solution);
+            }
+        }
+
+        None
+    }
+}
+
+pub mod with_vec {
+    use crate::eight_queens::{BoardIdx, BoardSet};
+
+    pub fn eight_queens_problem() -> [BoardIdx; 8] {
+        let res = eight_queens_problem_inner(&Vec::from_iter(BoardSet::all().iter()), 8).unwrap();
+        res.try_into().unwrap()
+    }
+
+    /// Returns `Some(_)` with a list of `to_place` queens, or `None` if it failed
+    fn eight_queens_problem_inner(
+        available: &Vec<BoardIdx>,
+        queens_remaining: usize,
+    ) -> Option<Vec<BoardIdx>> {
+        if queens_remaining == 0 {
+            return Some(vec![]);
+        }
+
+        for to_place in available.iter().copied() {
+            let mut new_available = available.clone();
+            for i in to_place
+                .iter_col()
+                .into_iter()
+                .chain(to_place.iter_row())
+                .chain(to_place.iter_diagonals())
+            {
+                let Some(to_remove) = new_available.iter().position(|x| i == *x) else {
+                    continue;
+                };
+                // `remove` is measured to be faster than `swap_remove`
+                // This might have to do with the order in which we tend to access the indices
+                new_available.remove(to_remove);
+            }
+
+            if let Some(mut solution) =
+                eight_queens_problem_inner(&new_available, queens_remaining - 1)
+            {
+                solution.push(to_place);
+                return Some(solution);
+            }
+        }
+
+        None
+    }
+}
+
+pub mod with_iter {
+    use std::collections::HashSet;
+
+    use crate::eight_queens::{BoardIdx, BoardSet};
+
+    pub fn eight_queens_problem() -> [BoardIdx; 8] {
+        let mut selected: Vec<BoardIdx> = Vec::with_capacity(8);
+        let mut to_attempt: Vec<HashSet<BoardIdx>> =
+            vec![HashSet::from_iter(BoardSet::all().iter())];
+
+        loop {
+            if selected.len() == 8 {
+                return selected.try_into().unwrap();
+            }
+
+            let available = to_attempt.last_mut().unwrap();
+            let Some(chosen) = available.iter().copied().next() else {
+                to_attempt.pop();
+                selected.pop();
+                continue;
+            };
+            available.remove(&chosen);
+            selected.push(chosen);
+
+            let mut sub_available = available.clone();
+
+            chosen
+                .iter_diagonals()
+                .into_iter()
+                .chain(chosen.iter_col())
+                .chain(chosen.iter_row())
+                .for_each(|r| {
+                    sub_available.remove(&r);
+                });
+
+            to_attempt.push(sub_available);
+        }
+    }
+}
+
+pub mod with_iter_boardset {
+    use std::collections::HashSet;
+
+    use crate::eight_queens::{BoardIdx, BoardSet};
+
+    pub fn eight_queens_problem() -> [BoardIdx; 8] {
+        let mut selected: Vec<BoardIdx> = Vec::with_capacity(8);
+        let mut to_attempt: Vec<BoardSet> = vec![BoardSet::all()];
+
+        loop {
+            if selected.len() == 8 {
+                return selected.try_into().unwrap();
+            }
+
+            let available = to_attempt.last_mut().unwrap();
+            let Some(chosen) = available.iter().into_iter().next() else {
+                to_attempt.pop();
+                selected.pop();
+                continue;
+            };
+            available.remove(chosen);
+            selected.push(chosen);
+
+            let mut sub_available = available.clone();
+
+            chosen
+                .iter_diagonals()
+                .into_iter()
+                .chain(chosen.iter_col())
+                .chain(chosen.iter_row())
+                .for_each(|r| sub_available.remove(r));
+
+            to_attempt.push(sub_available);
+        }
+    }
+}
+
+pub mod with_iter_boardset_cursor {
+    use fastrand::Rng;
+
+    use crate::eight_queens::{BoardIdx, BoardSet};
+
+    pub fn eight_queens_problem() -> [BoardIdx; 8] {
+        let mut rng = Rng::new();
+        let mut selected: Vec<BoardIdx> = Vec::with_capacity(8);
+        let mut available_stack: Vec<(BoardSet, u8)> = vec![(BoardSet::all(), rng.u8(0..64))];
+
+        'outer: loop {
+            if selected.len() == 8 {
+                return selected.try_into().unwrap();
+            }
+
+            let (available, available_cursor) = available_stack.last_mut().unwrap();
+
+            // Advance cursor until it points to an available board space
+            let mut count = 0;
+            loop {
+                if available.contains_idx(*available_cursor) {
+                    break;
+                }
+
+                if count >= 64 {
+                    available_stack.pop();
+                    selected.pop();
+                    continue 'outer;
+                }
+
+                *available_cursor = (*available_cursor + 1) % 64;
+
+                count += 1;
+            }
+
+            let chosen_idx = *available_cursor;
+            let chosen = BoardSet::idx_to_board_idx(chosen_idx);
+            available.remove(chosen);
+            selected.push(chosen);
+
+            let mut sub_available = available.clone();
+
+            chosen
+                .iter_diagonals()
+                .into_iter()
+                .chain(chosen.iter_col())
+                .chain(chosen.iter_row())
+                .for_each(|r| sub_available.remove(r));
+
+            available_stack.push((sub_available, rng.u8(0..64)));
+        }
+    }
+}
+
+#[cfg(test)]
+fn queens_conflict(queens: impl IntoIterator<Item = BoardIdx>) -> bool {
+    let queens = queens.into_iter().collect::<Vec<_>>();
+    for queen in &queens {
+        if queen
+            .iter_diagonals()
+            .into_iter()
+            .chain(queen.iter_col())
+            .chain(queen.iter_row())
+            .any(|intersects| (intersects != *queen) && queens.contains(&intersects))
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_all() {
+        use_with_all! {
+            println!("Testing {IMP_NAME}...");
+            for _ in 0..16 {
+                let queens = imp::eight_queens_problem();
+                assert!(!crate::eight_queens::queens_conflict(queens));
+            }
+        };
     }
 }
