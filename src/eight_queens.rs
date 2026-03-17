@@ -4,6 +4,7 @@ use std::{
     hash::{BuildHasher, Hasher},
     hint::{assert_unchecked, unreachable_unchecked},
     iter,
+    ops::BitAnd,
 };
 
 #[macro_export]
@@ -30,6 +31,7 @@ macro_rules! use_with_all {
         use_with_all!(with with_iter; $($expr)*);
         use_with_all!(with with_iter_boardset; $($expr)*);
         use_with_all!(with with_iter_boardset_cursor; $($expr)*);
+        use_with_all!(with with_iter_boardset_cursor_laneopts; $($expr)*);
     }};
 }
 
@@ -197,6 +199,16 @@ impl BoardSet {
     }
 }
 
+impl BitAnd for BoardSet {
+    type Output = Self;
+
+    fn bitand(self, rhs: Self) -> Self::Output {
+        Self {
+            inner: self.inner & rhs.inner,
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BoardIdx {
     col: u8,
@@ -224,7 +236,7 @@ impl BoardIdx {
         }
     }
 
-    fn is_valid(self) -> bool {
+    const fn is_valid(self) -> bool {
         self.col < 8 && self.row < 8
     }
 
@@ -897,6 +909,89 @@ pub mod with_iter_boardset_cursor {
                 .chain(chosen.iter_col())
                 .chain(chosen.iter_row())
                 .for_each(|r| sub_available.remove(r));
+
+            available_stack.push((sub_available, rng.u8(0..64)));
+        }
+    }
+}
+
+pub mod with_iter_boardset_cursor_laneopts {
+    use fastrand::Rng;
+
+    use crate::eight_queens::{BoardIdx, BoardSet};
+
+    pub fn eight_queens_problem() -> [BoardIdx; 8] {
+        /// Index with `BoardSet::board_idx_to_idx`
+        ///
+        /// Gives the BoardSet that the given queen can***not*** see
+        const QUEEN_VISION_LOOKUP_TABLE: [BoardSet; 64] = {
+            let mut table = [BoardSet::none(); 64];
+            let mut idx = 0;
+            while idx < 64 {
+                let queen = BoardSet::idx_to_board_idx(idx);
+                let mut vision = BoardSet::all();
+                vision.remove_col(queen.col);
+                vision.remove_row(queen.row);
+
+                macro_rules! eliminate_diagonal {
+                    ($dx:expr, $dy:expr) => {{
+                        let mut seen = queen;
+                        while seen.is_valid() {
+                            vision.remove(seen);
+                            seen.col = seen.col.wrapping_add_signed($dx);
+                            seen.row = seen.row.wrapping_add_signed($dy);
+                        }
+                    }};
+                }
+
+                eliminate_diagonal!(1, 1);
+                eliminate_diagonal!(1, -1);
+                eliminate_diagonal!(-1, 1);
+                eliminate_diagonal!(-1, -1);
+
+                table[idx as usize] = vision;
+
+                idx += 1;
+            }
+            table
+        };
+
+        let mut rng = Rng::new();
+        let mut selected: Vec<BoardIdx> = Vec::with_capacity(8);
+        let mut available_stack: Vec<(BoardSet, u8)> = Vec::with_capacity(8);
+        available_stack.push((BoardSet::all(), rng.u8(0..64)));
+
+        loop {
+            if selected.len() == 8 {
+                return selected.try_into().unwrap();
+            }
+
+            let (available, available_cursor) = available_stack.last_mut().unwrap();
+
+            // Advance cursor until it points to an available board space
+            // We can use trailing_zeros to find the next available space from the cursor, and if we rotate based
+            // on the current cursor we can change the starting location
+            // This feels so smart wtf
+            {
+                let rotated_board = available.inner.rotate_right(*available_cursor as u32);
+                let advance_by = rotated_board.trailing_zeros();
+                if advance_by == 64 {
+                    available_stack.pop();
+                    selected.pop();
+                    continue;
+                }
+                *available_cursor = (*available_cursor + advance_by as u8) % 64;
+            }
+
+            let chosen_idx = *available_cursor;
+            let chosen = BoardSet::idx_to_board_idx(chosen_idx);
+            available.remove(chosen);
+            selected.push(chosen);
+
+            let mut sub_available = available.clone();
+
+            sub_available = sub_available
+                & QUEEN_VISION_LOOKUP_TABLE[BoardSet::board_idx_to_idx(chosen) as usize];
 
             available_stack.push((sub_available, rng.u8(0..64)));
         }
