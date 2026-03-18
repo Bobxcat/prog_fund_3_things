@@ -6,13 +6,6 @@ use std::{
     },
 };
 
-use crate::math_things::Sign;
-
-pub struct IBig {
-    sign: Sign,
-    magnitude: UBig,
-}
-
 #[derive(Debug, Clone)]
 pub struct UBig {
     /// Least significant digit is at 0
@@ -41,6 +34,25 @@ impl UBig {
 
             s += &digit;
             place *= &UBig::from(radix);
+        }
+        s
+    }
+
+    pub fn to_radix(&self, radix: u32) -> String {
+        if self.is_zero() {
+            return "0".into();
+        }
+        assert!(radix > 0);
+
+        let radix_big = UBig::from(radix);
+        let mut s = String::new();
+        let mut num = self.clone();
+        while num > UBig::zero() {
+            let digit;
+            (num, digit) = num.div_rem(&radix_big);
+            let digit = u32::try_from(digit).unwrap();
+
+            s.insert(0, char::from_digit(digit, radix).unwrap());
         }
         s
     }
@@ -206,9 +218,22 @@ impl UBig {
         gcd_algorithms::gcd_binary(self, other)
     }
 
+    /// Computes the exact sqrt of `self` floored to the nearest integer
+    ///
     /// https://en.wikipedia.org/wiki/Square_root_algorithms#Implementation
     pub fn sqrt(&self) -> Self {
         todo!()
+    }
+
+    /// Converts `self` into a f64, lossy
+    pub fn to_f64(&self) -> f64 {
+        let mut n = 0f64;
+        for (dig_idx, digit) in self.digits.iter().enumerate().rev() {
+            let place = 2f64.powi(dig_idx as i32 * u64::BITS as i32);
+            let dig = *digit as f64;
+            n += dig * place;
+        }
+        n
     }
 }
 
@@ -261,6 +286,7 @@ mod mul_algorithms {
     /// Split into low `d` digits and the remaining digits
     ///
     /// Returns `(hi, lo)`
+    #[allow(unused)]
     fn split_at(num: UBig, d: usize) -> (UBig, UBig) {
         let mut digits = num.digits.into_iter();
         let lo = UBig::from_digits(digits.by_ref().take(d).collect());
@@ -269,6 +295,7 @@ mod mul_algorithms {
     }
 
     /// More complicated O(n^1.58) algorithm
+    #[allow(unused)]
     pub fn mul_karatsuba(a: &UBig, b: &UBig) -> UBig {
         todo!()
     }
@@ -346,6 +373,26 @@ impl From<u32> for UBig {
 impl From<u64> for UBig {
     fn from(value: u64) -> Self {
         Self::from_digits(vec![value])
+    }
+}
+
+impl TryFrom<UBig> for u32 {
+    type Error = ();
+
+    fn try_from(value: UBig) -> Result<Self, Self::Error> {
+        u32::try_from(u64::try_from(value)?).map_err(|_| ())
+    }
+}
+
+impl TryFrom<UBig> for u64 {
+    type Error = ();
+
+    fn try_from(value: UBig) -> Result<Self, Self::Error> {
+        match value.digits.len() {
+            0 => Ok(0),
+            1 => Ok(value.digits[0]),
+            _ => Err(()),
+        }
     }
 }
 
@@ -518,7 +565,6 @@ impl Ord for UBig {
 
 #[cfg(test)]
 mod tests {
-    use std::ops::AddAssign;
 
     use crate::math_things::bigint::UBig;
 
@@ -697,6 +743,18 @@ mod tests {
             let x = UBig::from_radix(from_str, radix);
             println!("===From Radix Test Start===\n{from_str}\n=\n{should:?}");
             assert_eq!(should, x);
+        });
+    }
+
+    #[test]
+    fn test_to_radix() {
+        [
+            "0",
+            "10",
+            "139423224561697880139724382870407283950070256587697307264108962948325571622863290691557658876222521294125",
+        ].into_iter().for_each(|raw| {
+            let num = UBig::from_radix(raw, 10);
+            assert_eq!(raw, num.to_radix(10));
         });
     }
 }

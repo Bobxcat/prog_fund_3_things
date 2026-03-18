@@ -46,11 +46,20 @@ impl Vec2 {
         self.dot(self)
     }
 
-    pub fn negated(mut self) -> Self {
+    pub fn sqr_dist(&self, other: &Self) -> IRat {
+        (self - other).sqr_magnitude()
+    }
+
+    pub fn negated(self) -> Self {
         Self {
             x: -self.x,
             y: -self.y,
         }
+    }
+
+    #[must_use]
+    pub fn normalized(&self, prec: &URat) -> Self {
+        todo!()
     }
 
     /// Performs `self ^ other`, otherwise known as the 2d wedge product or the perp dot product:

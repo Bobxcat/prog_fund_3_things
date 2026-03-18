@@ -105,6 +105,13 @@ pub enum Sign {
 }
 
 impl Sign {
+    pub fn from_is_pos(is_pos: bool) -> Self {
+        match is_pos {
+            true => Self::Pos,
+            false => Self::Neg,
+        }
+    }
+
     #[must_use]
     pub fn multiply(self, rhs: Self) -> Self {
         use Sign::*;

@@ -17,8 +17,10 @@ pub struct Mat2 {
 
 impl Mat2 {
     /// From row-major values: `[a, b, c, d]`
-    pub fn new(vals: [IRat; 4]) -> Self {
-        Self { vals }
+    pub fn new(vals: [impl Into<IRat>; 4]) -> Self {
+        Self {
+            vals: vals.map(|x| x.into()),
+        }
     }
 
     pub fn a(&self) -> &IRat {
@@ -53,6 +55,21 @@ impl Mat2 {
                 self.a().clone(),
             ]) * &det.recip(),
         )
+    }
+
+    /// Matrix that rotates 90 degrees
+    pub fn rotation_90() -> Self {
+        Self::new([0, -1, 1, 0])
+    }
+
+    /// Matrix that rotates 180 degrees
+    pub fn rotation_180() -> Self {
+        Self::new([-1, 0, 0, -1])
+    }
+
+    /// Matrix that rotates 270 degrees
+    pub fn rotation_270() -> Self {
+        Self::new([0, 1, -1, 0])
     }
 }
 

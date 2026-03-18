@@ -54,13 +54,17 @@ impl IRat {
 
     /// A non-normal `x` will result in `0` being returned
     pub fn from_f64(x: f64) -> Self {
-        Self {
+        let s = Self {
             magnitude: URat::from_f64(x),
             sign: match x.is_sign_positive() {
                 true => Sign::Pos,
                 false => Sign::Neg,
             },
-        }
+        };
+
+        println!("IRat::from_f64: {x} -> {s:?}");
+
+        s
     }
 
     pub fn powi(&self, pow: u32) -> Self {
@@ -84,7 +88,12 @@ impl IRat {
 
     /// Converts `self` into an f64, with possible loss
     pub fn to_f64(&self) -> f64 {
-        todo!()
+        // FIXME: Will fail with large fractions that should be representable
+        self.magnitude.num.to_f64() / self.magnitude.den.to_f64()
+            * match self.sign {
+                Sign::Pos => 1.,
+                Sign::Neg => -1.,
+            }
     }
 
     /// Panics if `self` is zero
@@ -101,6 +110,36 @@ impl IRat {
 impl From<f64> for IRat {
     fn from(value: f64) -> Self {
         Self::from_f64(value)
+    }
+}
+
+impl From<i32> for IRat {
+    fn from(value: i32) -> Self {
+        Self::from(value as i64)
+    }
+}
+
+impl From<i64> for IRat {
+    fn from(value: i64) -> Self {
+        Self {
+            magnitude: URat::from(value.unsigned_abs()),
+            sign: Sign::from_is_pos(value >= 0),
+        }
+    }
+}
+
+impl From<u32> for IRat {
+    fn from(value: u32) -> Self {
+        Self::from(value as u64)
+    }
+}
+
+impl From<u64> for IRat {
+    fn from(value: u64) -> Self {
+        Self {
+            magnitude: URat::from(value),
+            sign: Sign::Pos,
+        }
     }
 }
 
@@ -216,11 +255,17 @@ impl Ord for IRat {
 }
 
 /// A reduced unsigned rational number
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct URat {
     num: UBig,
     /// The denominator, always non-zero
     den: UBig,
+}
+
+impl std::fmt::Debug for URat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}/{:?}", self.num, self.den)
+    }
 }
 
 impl URat {
@@ -363,6 +408,18 @@ impl URat {
         num *= &URat::from_u64(2).powi(exp);
 
         num
+    }
+}
+
+impl From<u32> for URat {
+    fn from(value: u32) -> Self {
+        URat::from(value as u64)
+    }
+}
+
+impl From<u64> for URat {
+    fn from(value: u64) -> Self {
+        URat::from_u64(value)
     }
 }
 
