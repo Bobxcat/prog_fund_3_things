@@ -1,11 +1,13 @@
 use std::{
-    cmp::Ordering,
+    cmp::{self, Ordering},
     ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Range, Sub},
 };
 
+use dashu_float::{FBig, round::Round};
+
 use crate::{
     derive_binop_by_value, derive_binop_by_value_assymetric,
-    math_things::{Sign, bigint::UBig},
+    math_things::{Sign, bigint::UBig, trace_op},
 };
 
 #[inline(always)]
@@ -21,11 +23,42 @@ fn extract_bits(mut x: u64, bits: Range<u32>, keep_position: bool) -> u64 {
     x
 }
 
+/// Precision stores the exponent of a power of two
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Precision(pub usize);
+
+impl Precision {
+    pub fn digits(n: usize) -> Self {
+        Self(64 * n)
+    }
+
+    pub fn to_urat(&self) -> URat {
+        URat::from_u64_recip(2).powi(self.0 as i32)
+    }
+}
+
+impl Add for Precision {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(self.0 + rhs.0)
+    }
+}
+
 /// A reduced signed rational number
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct IRat {
     magnitude: URat,
     sign: Sign,
+}
+
+impl std::fmt::Debug for IRat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.sign {
+            Sign::Pos => write!(f, "{:?}", self.magnitude),
+            Sign::Neg => write!(f, "-{:?}", self.magnitude),
+        }
+    }
 }
 
 impl IRat {
@@ -52,6 +85,10 @@ impl IRat {
         }
     }
 
+    pub fn abs_unsigned(self) -> URat {
+        self.magnitude
+    }
+
     /// A non-normal `x` will result in `0` being returned
     pub fn from_f64(x: f64) -> Self {
         let s = Self {
@@ -62,9 +99,31 @@ impl IRat {
             },
         };
 
-        println!("IRat::from_f64: {x} -> {s:?}");
-
         s
+    }
+
+    pub fn from_fbig<RoundingMode: Round, const BASE: u64>(x: FBig<RoundingMode, BASE>) -> IRat {
+        let (significand, exp) = x.into_repr().into_parts();
+        let (sign, sig_words) = significand.as_sign_words();
+
+        let mut x = IRat {
+            magnitude: URat {
+                num: UBig::from_digits(sig_words.to_vec()),
+                den: UBig::one(),
+            },
+            sign: match sign {
+                dashu_base::Sign::Positive => Sign::Pos,
+                dashu_base::Sign::Negative => Sign::Neg,
+            },
+        };
+
+        if exp >= 0 {
+            x.magnitude.num *= &UBig::new(BASE).pow(exp.unsigned_abs() as u64);
+        } else {
+            x.magnitude.den *= &UBig::new(BASE).pow(exp.unsigned_abs() as u64);
+        }
+
+        x
     }
 
     pub fn powi(&self, pow: u32) -> Self {
@@ -79,7 +138,7 @@ impl IRat {
     ///
     /// # Panics
     /// * If `self < 0`
-    pub fn sqrt(&self, prec: &URat) -> Self {
+    pub fn sqrt(&self, prec: Precision) -> Self {
         Self {
             magnitude: self.magnitude.sqrt(prec),
             sign: self.sign,
@@ -89,10 +148,15 @@ impl IRat {
     /// Converts `self` into an f64, with possible loss
     pub fn to_f64(&self) -> f64 {
         // FIXME: Will fail with large fractions that should be representable
-        self.magnitude.num.to_f64() / self.magnitude.den.to_f64()
+        self.to_fbig().to_f64().value()
+    }
+
+    /// Converts `self` into a big float, with possible loss
+    pub fn to_fbig(&self) -> FBig {
+        self.magnitude.to_fbig()
             * match self.sign {
-                Sign::Pos => 1.,
-                Sign::Neg => -1.,
+                Sign::Pos => FBig::ONE,
+                Sign::Neg => FBig::NEG_ONE,
             }
     }
 
@@ -103,6 +167,15 @@ impl IRat {
         Self {
             magnitude: self.magnitude.recip(),
             sign: self.sign,
+        }
+    }
+}
+
+impl From<URat> for IRat {
+    fn from(value: URat) -> Self {
+        Self {
+            magnitude: value,
+            sign: Sign::Pos,
         }
     }
 }
@@ -264,13 +337,20 @@ pub struct URat {
 
 impl std::fmt::Debug for URat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}/{:?}", self.num, self.den)
+        write!(f, "{}/{}", self.num, self.den)
+    }
+}
+
+impl std::fmt::Display for URat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.num, self.den)
     }
 }
 
 impl URat {
     #[track_caller]
-    pub fn new(num: UBig, den: UBig) -> Self {
+    pub fn new(num: impl Into<UBig>, den: impl Into<UBig>) -> Self {
+        let (num, den) = (num.into(), den.into());
         if den.is_zero() {
             panic!("Called URat::new with a denominator of zero");
         }
@@ -285,17 +365,13 @@ impl URat {
     }
 
     pub fn from_u64_recip(den: u64) -> Self {
+        if den == 0 {
+            panic!("Called URat::from_u64_recip with a denominator of zero");
+        }
         Self {
             num: UBig::one(),
             den: den.into(),
         }
-    }
-
-    /// Returns `1 / 2^sig_figs`
-    ///
-    /// Intended for specifying precisions for imprecise functions
-    pub fn from_sig_figs(sig_figs: u32) -> Self {
-        Self::from_u64_recip(2).powi(sig_figs as i32)
     }
 
     pub fn is_zero(&self) -> bool {
@@ -324,12 +400,52 @@ impl URat {
         }
     }
 
+    /// Panics if the denominator is zero
     #[must_use]
+    #[track_caller]
     pub fn reduced(&self) -> Self {
+        assert!(!self.den.is_zero());
         let divisor = UBig::gcd(self.num.clone(), self.den.clone());
+        debug_assert_eq!(
+            self.num,
+            (&self.num / &divisor) * &divisor,
+            "GCD does not divide numerator:\nnum={}\nden={}\ngcd={}\num/gcd = {}\n(num/gcd)*gcd={}",
+            self.num,
+            self.den,
+            divisor,
+            &self.num / &divisor,
+            (&self.num / &divisor) * &divisor,
+        );
+        debug_assert_eq!(
+            self.den,
+            (&self.den / &divisor) * &divisor,
+            "GCD does not divide denominator:\nnum={}\nden={}\ngcd={}\nden/gcd = {}\n(den/gcd)*gcd={}",
+            self.num,
+            self.den,
+            divisor,
+            &self.den / &divisor,
+            (&self.den / &divisor) * &divisor,
+        );
         Self {
             num: &self.num / &divisor,
             den: &self.den / &divisor,
+        }
+    }
+
+    pub fn round(&mut self, prec: Precision) {
+        // We leave at least 2 digits in the numerator and denominator
+        let min_digits = 2;
+        let prec_digits = prec.0.div_ceil(64);
+        let digits_to_keep = min_digits.max(prec_digits);
+
+        let digits_to_remove = cmp::min(
+            self.num.digits().len().saturating_sub(digits_to_keep),
+            self.den.digits().len().saturating_sub(digits_to_keep),
+        );
+
+        for _ in 0..digits_to_remove {
+            self.num.digits_mut().remove(0);
+            self.den.digits_mut().remove(0);
         }
     }
 
@@ -355,16 +471,27 @@ impl URat {
     pub fn powi(&self, exp: i32) -> Self {
         let mut n = Self::one();
 
-        for _ in 0..exp.abs() {
-            n *= &self;
+        match exp >= 0 {
+            true => {
+                for _ in 0..exp.abs() {
+                    n *= &self;
+                }
+            }
+            false => {
+                for _ in 0..exp.abs() {
+                    n /= &self;
+                }
+            }
         }
 
         n
     }
 
     /// IMPRECISE
-    pub fn sqrt(&self, prec: &URat) -> Self {
-        sqrt_algorithms::sqrt_herons_method(self, prec)
+    pub fn sqrt(&self, prec: Precision) -> Self {
+        trace_op("URat::sqrt", move || {
+            sqrt_algorithms::sqrt_herons_method(self, prec)
+        })
     }
 
     /// Discards the sign
@@ -403,11 +530,24 @@ impl URat {
             }
         }
 
-        // Now, result = frac * 2^(exp - 1023)
         let exp = exp_bits as i32 - 1023;
         num *= &URat::from_u64(2).powi(exp);
 
-        num
+        num.reduced()
+    }
+
+    /// Discards the sign
+    pub fn from_fbig<RoundingMode: Round, const BASE: u64>(x: FBig<RoundingMode, BASE>) -> URat {
+        IRat::from_fbig(x).abs_unsigned()
+    }
+
+    pub fn to_f64(&self) -> f64 {
+        self.to_fbig().to_f64().value()
+    }
+
+    /// Converts `self` into a big float, with possible loss
+    pub fn to_fbig(&self) -> FBig {
+        self.num.to_fbig() / self.den.to_fbig()
     }
 }
 
@@ -428,11 +568,13 @@ impl Add<&URat> for &URat {
 
     fn add(self, rhs: &URat) -> Self::Output {
         // a/b + c/d = (ad + bc) / bd
-        URat {
-            num: &self.num * &rhs.den + &rhs.num * &self.den,
-            den: &self.den * &rhs.den,
-        }
-        .reduced()
+        trace_op("URat::add", || {
+            let x = trace_op("URat::add::addition_step", || URat {
+                num: &self.num * &rhs.den + &rhs.num * &self.den,
+                den: &self.den * &rhs.den,
+            });
+            trace_op("URat::add::reduction_step", move || x.reduced())
+        })
     }
 }
 derive_binop_by_value!(URat, Add, add, +);
@@ -486,7 +628,12 @@ derive_binop_by_value_assymetric!(URat, UBig, Mul, mul, *);
 impl Div<&URat> for &URat {
     type Output = URat;
 
+    #[track_caller]
     fn div(self, rhs: &URat) -> Self::Output {
+        if rhs.is_zero() {
+            panic!("Tried to divide by zero");
+        }
+
         // (a/b) / (c/d) = ad / bc
         URat {
             num: &self.num * &rhs.den,
@@ -500,6 +647,7 @@ derive_binop_by_value!(URat, Div, div, /);
 impl Div<u64> for &URat {
     type Output = URat;
 
+    #[track_caller]
     fn div(self, rhs: u64) -> Self::Output {
         self / URat::from_u64(rhs)
     }
@@ -549,24 +697,70 @@ impl Ord for URat {
 }
 
 mod sqrt_algorithms {
-    use crate::math_things::rational::URat;
+    use dashu_base::SquareRoot;
 
-    pub fn sqrt_herons_method(s: &URat, prec: &URat) -> URat {
+    use crate::math_things::{
+        rational::{Precision, URat},
+        trace_op,
+    };
+
+    pub fn sqrt_herons_method(s: &URat, prec: Precision) -> URat {
         if s.is_zero() {
             return URat::zero();
         }
 
+        let prec_with_guard = prec + Precision::digits(2);
+        let prec_num = prec.to_urat();
+
         let mut guess = s.clone() / 2;
 
-        loop {
-            let next_guess = (&guess + s / &guess) / 2;
+        let mut i = 0;
+        while i < 512 {
+            let mut next_guess = trace_op("sqrt_herons_method::next_guess_calc", || {
+                (&guess + s / &guess) / 2
+            });
+
+            next_guess.round(prec_with_guard);
 
             // The change between guesses is at most the
             // absolute error of the current guess
-            if next_guess.abs_difference(&guess) < *prec {
-                return next_guess;
+            if trace_op("sqrt_herons_method::difference_comparison", || {
+                next_guess.abs_difference(&guess) < prec_num
+            }) {
+                break;
             }
             guess = next_guess;
+            i += 1;
         }
+        guess.round(prec);
+
+        guess
+    }
+
+    pub fn sqrt_through_fbig(s: &URat, prec: Precision) -> URat {
+        let f = s.to_fbig().with_precision(prec.0 + 20).value();
+        URat::from_fbig(f.sqrt())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::math_things::rational::{IRat, Precision};
+
+    #[test]
+    fn test_sqrt() {
+        [1.01, 10., 16., 0.01].into_iter().for_each(|x| {
+            let num = IRat::from_f64(x).sqrt(Precision(128));
+            let should = x.sqrt();
+
+            println!(
+                "sqrt({x}); should={should}; got={num:?}={}",
+                num.to_fbig()
+                    .with_precision(128)
+                    .value()
+                    .to_decimal()
+                    .value()
+            );
+        });
     }
 }

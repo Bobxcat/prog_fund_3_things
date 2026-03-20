@@ -71,6 +71,22 @@ impl Mat2 {
     pub fn rotation_270() -> Self {
         Self::new([0, 1, -1, 0])
     }
+
+    pub fn identity() -> Self {
+        Self::new([1, 0, 0, 1])
+    }
+
+    pub fn scale(scale: IRat) -> Self {
+        Self::identity() * scale
+    }
+}
+
+impl Mul<&Mat2> for &Mat2 {
+    type Output = Mat2;
+
+    fn mul(self, rhs: &Mat2) -> Self::Output {
+        todo!()
+    }
 }
 
 impl Mul<&IRat> for &Mat2 {

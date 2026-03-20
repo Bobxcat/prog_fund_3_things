@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 criterion = "0.8.2"
+dashu-base = "0.4.1"
+dashu-float = "0.4.3"
 fastrand = "2.3.0"
 fxhash = "0.2.1"
 # image = "0.25.10"
@@ -18,6 +20,9 @@ harness = false
 
 [profile.dev]
 opt-level = 1
+
+[profile.dev.package.imageproc]
+opt-level = 3
 
 [profile.bench]
 lto = "fat"

@@ -1,9 +1,19 @@
 use std::{
     cmp::Ordering,
     fmt,
+    io::{Write, stdout},
     ops::{
         Add, AddAssign, Div, Mul, MulAssign, Rem, Shl, ShlAssign, Shr, ShrAssign, Sub, SubAssign,
     },
+    str::FromStr,
+    time::Instant,
+};
+
+use dashu_float::{DBig, FBig};
+
+use crate::{
+    derive_binop_by_value,
+    math_things::{trace_op, trace_op_time},
 };
 
 #[derive(Debug, Clone)]
@@ -35,6 +45,7 @@ impl UBig {
             s += &digit;
             place *= &UBig::from(radix);
         }
+        s.trim();
         s
     }
 
@@ -66,6 +77,10 @@ impl UBig {
     }
 
     pub fn mul_assign_u64(&mut self, n: u64) {
+        if n == 0 {
+            *self = Self::zero();
+            return;
+        }
         // From carrying_mul docs
         let mut carry = 0;
         for d in self.digits.iter_mut() {
@@ -97,6 +112,10 @@ impl UBig {
         Self { digits: vec![1] }
     }
 
+    pub fn is_one(&self) -> bool {
+        &self.digits == &[1]
+    }
+
     /// Returns `(div, rem)` by the word size of UBig (64 bits for a u64 bit digit)
     fn div_rem_word(n: u64) -> (u64, u64) {
         (n / u64::BITS as u64, n % u64::BITS as u64)
@@ -116,6 +135,7 @@ impl UBig {
         let dig = self.digit_or_insert(dig as usize);
         *dig &= mask;
         *dig |= (to as u64) << shmt;
+        self.trim();
     }
 
     /// Should be called after any operation which may leave zeroed digits at the top
@@ -126,6 +146,7 @@ impl UBig {
         }
     }
 
+    /// MAY LEAVE UNTRIMMED DIGITS
     #[inline]
     fn digit_or_insert(&mut self, digit: usize) -> &mut u64 {
         while self.digits.len() <= digit {
@@ -182,24 +203,43 @@ impl UBig {
             self.digits[0] |= (!0u64).unbounded_shr(u64::BITS - shamt_in_digit as u32);
         }
 
-        self.trim();
         for _ in 0..digits_to_add {
             let ext_word = if ext { !0 } else { 0 };
             self.digits.insert(0, ext_word)
         }
+        // Trim b/c we added a 0 at the start of the function and
+        // we may add `0` digits in the digits_to_add step when ext == false
+        self.trim();
     }
 
     /// Returns `0` when self is zero
-    pub fn trailing_zeroes(&self) -> usize {
+    pub fn trailing_zeroes(&self) -> u64 {
         let mut z = 0;
         for &dig in &self.digits {
             let trail = dig.trailing_zeros();
-            z += trail;
+            z += trail as u64;
             if trail < u64::BITS {
                 break;
             }
         }
-        z as usize
+        z
+    }
+
+    pub fn pow(&self, exp: u64) -> Self {
+        if exp == 0 {
+            return Self::one();
+        }
+        if exp == 1 {
+            return self.clone();
+        }
+
+        let mut num = Self::one();
+
+        for _ in 0..exp {
+            num *= self;
+        }
+
+        num
     }
 
     pub fn is_odd(&self) -> bool {
@@ -210,12 +250,20 @@ impl UBig {
         !self.is_odd()
     }
 
+    pub fn count_ones(&self) -> u64 {
+        self.digits.iter().map(|x| x.count_ones() as u64).sum()
+    }
+
+    pub fn is_power_of_two(&self) -> bool {
+        self.count_ones() == 1
+    }
+
     pub fn gcd(self, other: Self) -> UBig {
         if self.is_zero() && other.is_zero() {
             return UBig::one();
         }
 
-        gcd_algorithms::gcd_binary(self, other)
+        trace_op("UBig::gcd", || gcd_algorithms::gcd_binary(self, other))
     }
 
     /// Computes the exact sqrt of `self` floored to the nearest integer
@@ -235,6 +283,26 @@ impl UBig {
         }
         n
     }
+
+    pub fn to_fbig(&self) -> FBig {
+        let res = DBig::from_str(&self.to_radix(10)).unwrap();
+        res.to_binary().unwrap()
+    }
+
+    pub fn digits(&self) -> &[u64] {
+        &self.digits
+    }
+
+    /// Make sure not to leave the digits in an invalid state (for ex., no leading zero digits)
+    pub(crate) fn digits_mut(&mut self) -> &mut Vec<u64> {
+        &mut self.digits
+    }
+}
+
+impl fmt::Display for UBig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.to_radix(10))
+    }
 }
 
 impl fmt::Binary for UBig {
@@ -251,17 +319,37 @@ impl fmt::Binary for UBig {
 }
 
 mod mul_algorithms {
+    use std::time::Instant;
+
     use crate::math_things::bigint::UBig;
 
     /// Simple O(n^2) algorithm
     pub fn mul_basic(a: &UBig, b: &UBig) -> UBig {
         if a.is_zero() || b.is_zero() {
             // Skip needing to trim by checking for mul by zero
-            // Account for multiply by 0, otherwise the result will only ever be large
+            // Account for multiply by 0, otherwise the result will only ever be larger
+            // than the inputs
             return UBig::zero();
         }
 
-        let len = a.digits.len().max(b.digits.len());
+        if a.is_one() {
+            return b.clone();
+        } else if b.is_one() {
+            return a.clone();
+        }
+
+        // If either is a power of two, this can be optimized as a shift, which is much faster
+        if a.is_power_of_two() {
+            let shamt = a.trailing_zeroes();
+            return b.clone() << shamt;
+        } else if b.is_power_of_two() {
+            let shamt = b.trailing_zeroes();
+            return a.clone() << shamt;
+        }
+
+        // Multiply by two to account for digits added during multiplication
+        // there's certainly a better way to do this lol
+        let len = a.digits.len().max(b.digits.len()) * 2;
         let mut out = UBig::zero();
 
         for j in 0..len {
@@ -275,11 +363,13 @@ mod mul_algorithms {
                 );
             }
             // The final digit set in the inner loop is
-            // `out.get(j + i)` -> `out.get(j + len - j - 1)` -> `out.get(len - 1)`
+            // `out.get(j + i)` -> `out.get(j + (len - j - 1))` -> `out.get(len - 1)`
             // so our final carry should be to `out.get(len)`
             out.add_digit(len, carry);
         }
 
+        // It's not clear that the `digit_or_insert` steps won't leave zeroes at the end
+        out.trim();
         out
     }
 
@@ -310,6 +400,11 @@ mod div_algorithms {
         // From https://en.wikipedia.org/wiki/Division_algorithm#Long_division
         assert!(!d.is_zero(), "Attempted to divide by zero");
 
+        // Special case of division by one, which is common for rationals, where the GCD is often one
+        if d.is_one() {
+            return (n.clone(), UBig::zero());
+        }
+
         let mut q = UBig::zero();
         let mut r = UBig::zero();
         for i in (0..n.digits.len() * u64::BITS as usize).rev() {
@@ -322,6 +417,9 @@ mod div_algorithms {
             }
         }
 
+        q.trim();
+        r.trim();
+
         (q, r)
     }
 }
@@ -333,6 +431,11 @@ mod gcd_algorithms {
 
     /// https://en.wikipedia.org/wiki/Binary_GCD_algorithm
     pub fn gcd_binary(mut u: UBig, mut v: UBig) -> UBig {
+        let dbg = false;
+        if dbg {
+            println!("=====\nGCD:\n* {u} ({u:b})\n* {v} ({v:b})\n=====");
+        }
+
         if u.is_zero() {
             return v;
         } else if v.is_zero() {
@@ -346,8 +449,11 @@ mod gcd_algorithms {
         let k = i.min(j);
 
         loop {
-            debug_assert!(u.is_odd());
-            debug_assert!(v.is_odd());
+            if dbg {
+                println!("u={u} ({u:b})\nv={v} ({v:b})\n\n");
+            }
+            debug_assert!(u.is_odd(), "should be odd: u={}", u);
+            debug_assert!(v.is_odd(), "should be odd: v={}", v);
 
             // Ensure u <= v
             if u > v {
@@ -357,7 +463,12 @@ mod gcd_algorithms {
             v -= &u;
 
             if v.is_zero() {
-                return u << k;
+                let mut res = u << k;
+                res.trim();
+                if dbg {
+                    println!("FINAL={res}");
+                }
+                return res;
             }
 
             v >>= v.trailing_zeroes();
@@ -427,6 +538,22 @@ impl ShlAssign<usize> for UBig {
     }
 }
 
+impl Shl<u64> for UBig {
+    type Output = UBig;
+
+    fn shl(mut self, rhs: u64) -> Self::Output {
+        self <<= rhs;
+        self
+    }
+}
+impl Shl<usize> for UBig {
+    type Output = UBig;
+
+    fn shl(self, rhs: usize) -> Self::Output {
+        self << rhs as u64
+    }
+}
+
 impl ShrAssign<u64> for UBig {
     fn shr_assign(&mut self, rhs: u64) {
         let (digits_to_remove, shamt_in_digit) = Self::div_rem_word(rhs);
@@ -456,27 +583,30 @@ impl Mul<&UBig> for &UBig {
     type Output = UBig;
 
     fn mul(self, rhs: &UBig) -> Self::Output {
-        mul_algorithms::mul_basic(self, rhs)
+        trace_op("UBig::mul", move || mul_algorithms::mul_basic(self, rhs))
     }
 }
+derive_binop_by_value!(UBig, Mul, mul, *);
 
 impl Div<&UBig> for &UBig {
     type Output = UBig;
 
     #[inline]
     fn div(self, rhs: &UBig) -> Self::Output {
-        self.div_rem(rhs).0
+        trace_op("UBig::div", move || self.div_rem(rhs).0)
     }
 }
+derive_binop_by_value!(UBig, Div, div, /);
 
 impl Rem<&UBig> for &UBig {
     type Output = UBig;
 
     #[inline]
     fn rem(self, rhs: &UBig) -> Self::Output {
-        self.div_rem(rhs).1
+        trace_op("UBig::rem", move || self.div_rem(rhs).1)
     }
 }
+derive_binop_by_value!(UBig, Rem, rem, %);
 
 impl MulAssign<&Self> for UBig {
     fn mul_assign(&mut self, rhs: &Self) {
@@ -507,15 +637,6 @@ impl Sub<Self> for UBig {
 
     fn sub(mut self, rhs: Self) -> Self::Output {
         self -= &rhs;
-        self
-    }
-}
-
-impl Shl<usize> for UBig {
-    type Output = Self;
-
-    fn shl(mut self, rhs: usize) -> Self::Output {
-        self <<= rhs;
         self
     }
 }
@@ -653,12 +774,19 @@ mod tests {
                 "0",
                 "0",
             ),
+            (
+                "130604389193744384375",
+                "129807421463370697919021812023296",
+                "16953418993038474840944332717710402418794456678400000",
+            ),
         ].into_iter().for_each(|(a_str, b_str, should_str)| {
             let a = UBig::from_radix(a_str, 10);
             let b = UBig::from_radix(b_str, 10);
             let should = UBig::from_radix(should_str, 10);
-            println!("===Mul Test Start===\n{a_str}\n*\n{b_str}\n= {should_str}");
-            assert_eq!(&a * &b, should);
+            println!("===Mul Test Start===\n{a_str}\n*\n{b_str}\n=    {should_str}");
+            let res = &a * &b;
+            println!("Got: {res}");
+            assert_eq!(res, should);
             println!("Sucess!")
         });
     }

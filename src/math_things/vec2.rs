@@ -1,14 +1,32 @@
-use std::ops::{Add, Div, Mul, Sub};
+use std::{
+    fmt::Display,
+    ops::{Add, Div, Mul, Sub},
+};
 
 use crate::{
     derive_binop_by_value, derive_binop_by_value_assymetric,
-    math_things::rational::{IRat, URat},
+    math_things::{
+        rational::{IRat, Precision, URat},
+        trace_op,
+    },
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Vec2 {
     pub x: IRat,
     pub y: IRat,
+}
+
+impl std::fmt::Debug for Vec2 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self}")
+    }
+}
+
+impl Display for Vec2 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "({:?}, {:?})", self.x, self.y)
+    }
 }
 
 impl Vec2 {
@@ -17,6 +35,21 @@ impl Vec2 {
             x: x.into(),
             y: y.into(),
         }
+    }
+
+    pub fn with_x(mut self, x: impl Into<IRat>) -> Self {
+        self.x = x.into();
+        self
+    }
+
+    pub fn with_y(mut self, y: impl Into<IRat>) -> Self {
+        self.y = y.into();
+        self
+    }
+
+    /// `to_f64s`, but casted to i32s
+    pub fn to_i32s(&self) -> (i32, i32) {
+        (self.x.to_f64() as i32, self.y.to_f64() as i32)
     }
 
     pub fn to_f32s(&self) -> (f32, f32) {
@@ -46,6 +79,11 @@ impl Vec2 {
         self.dot(self)
     }
 
+    /// IMPRECISE
+    pub fn magnitude(&self, prec: Precision) -> IRat {
+        self.sqr_magnitude().sqrt(prec)
+    }
+
     pub fn sqr_dist(&self, other: &Self) -> IRat {
         (self - other).sqr_magnitude()
     }
@@ -57,9 +95,18 @@ impl Vec2 {
         }
     }
 
+    /// IMPRECISE
     #[must_use]
-    pub fn normalized(&self, prec: &URat) -> Self {
-        todo!()
+    pub fn normalized(&self, prec: Precision) -> Self {
+        trace_op("Vec2::normalized", move || self / self.magnitude(prec))
+    }
+
+    /// Returns this vector reflected across `normal`
+    /// * `self` and `normal` should be unit vectors
+    #[must_use]
+    pub fn reflected(&self, normal: &Self) -> Vec2 {
+        // https://en.wikipedia.org/wiki/Specular_reflection#Vector_formulation
+        self - IRat::from(2u64) * normal * (normal.dot(self))
     }
 
     /// Performs `self ^ other`, otherwise known as the 2d wedge product or the perp dot product:

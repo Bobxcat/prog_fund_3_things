@@ -5,19 +5,16 @@ use imageproc::{
 
 use crate::math_things::{
     mat2::Mat2,
-    rational::{IRat, URat},
+    print_trace_time,
+    rational::{IRat, Precision},
+    trace_op,
     vec2::Vec2,
 };
 
-const PREC: u32 = 128;
+const PREC: Precision = Precision(128);
 
 mod intersect2d {
-    use crate::math_things::{
-        mat2::Mat2,
-        rational::{IRat, URat},
-        raytracer_2d::PREC,
-        vec2::Vec2,
-    };
+    use crate::math_things::{mat2::Mat2, rational::IRat, raytracer_2d::PREC, vec2::Vec2};
 
     /// Returns the position of a line-line intersection
     ///
@@ -26,6 +23,7 @@ mod intersect2d {
     ///
     /// A different solution:
     /// https://stackoverflow.com/questions/563198/how-do-you-detect-where-two-line-segments-intersect
+    #[inline]
     pub fn intersect_lines(
         a_start: &Vec2,
         a_dir: &Vec2,
@@ -53,6 +51,7 @@ mod intersect2d {
 
         /// Computes `lower < upper` if `closed == false`,
         /// or `lower <= upper` if `closed == true`
+        #[inline]
         fn ge_or_gt(lower: &IRat, upper: &IRat, closed: bool) -> bool {
             match closed {
                 true => lower <= upper,
@@ -87,23 +86,45 @@ mod intersect2d {
         let c = surface_normal.clone().negated().dot(ray_dir);
 
         let sqrt_inner = IRat::one() - r.powi(2) * (IRat::one() - c.powi(2));
-        assert!(sqrt_inner >= IRat::zero());
-
-        let n_mag = &r * &c - sqrt_inner.sqrt(&URat::from_sig_figs(PREC));
+        if sqrt_inner < IRat::zero() {
+            // Total internal reflection
+            return ray_dir.reflected(surface_normal);
+        }
+        let n_mag = &r * &c - sqrt_inner.sqrt(PREC);
         r * ray_dir + n_mag * surface_normal
     }
-
-    // pub fn intersect_line_aabb(line_start: &Vec2, line_dir: &Vec2) -> {
-    //     //
-    // }
 }
 
-/// Axis-aligned bounding box
-pub struct Aabb {
-    top_left: Vec2,
-    bot_right: Vec2,
+#[allow(unused)]
+mod ior {
+    use crate::math_things::rational::{IRat, URat};
+
+    pub fn vacuum() -> IRat {
+        IRat::one()
+    }
+
+    pub fn water() -> IRat {
+        IRat::from(URat::new(4u64, 3u64))
+    }
+
+    pub fn olive_oil() -> IRat {
+        IRat::from(URat::new(147u64, 100u64))
+    }
+
+    pub fn cubic_zirconia() -> IRat {
+        IRat::from(URat::new(215u64, 100u64))
+    }
+
+    pub fn diamond() -> IRat {
+        IRat::from(URat::new(2417u64, 1000u64))
+    }
+
+    pub fn moissanite() -> IRat {
+        IRat::from(URat::new(265u64, 100u64))
+    }
 }
 
+#[derive(Debug, Clone)]
 pub struct Ray {
     pub pos: Vec2,
     pub dir: Vec2,
@@ -122,6 +143,7 @@ impl Ray {
 }
 
 /// A boundary between indices of refraction
+#[derive(Debug, Clone)]
 pub struct Boundary {
     /// The placement and size of the boundary
     pub placement: Ray,
@@ -152,16 +174,18 @@ impl Scene {
         }
         let mut nearest_intersection: Option<IntersectionInfo> = None;
         for (boundary_idx, boundary) in self.boundaries.iter().enumerate() {
-            if let Some(pos) = intersect2d::intersect_lines(
-                &ray.pos,
-                &ray.dir,
-                &boundary.placement.pos,
-                &boundary.placement.dir,
-                false,
-                true,
-                true,
-                true,
-            ) {
+            if let Some(pos) = trace_op("step_ray::intersect_lines", || {
+                intersect2d::intersect_lines(
+                    &ray.pos,
+                    &(&ray.dir * IRat::from(0b100000000)),
+                    &boundary.placement.pos,
+                    &boundary.placement.dir,
+                    false,
+                    true,
+                    true,
+                    true,
+                )
+            }) {
                 let dist = pos.sqr_dist(&ray.pos);
                 if nearest_intersection
                     .as_ref()
@@ -183,15 +207,16 @@ impl Scene {
 
             let (leaving_ior, entering_ior, aligned_normal) = match coming_from_lhs {
                 true => (&boundary.lhs_ior, &boundary.rhs_ior, normal_rhs.negated()),
-                false => (&boundary.rhs_ior, &boundary.rhs_ior, normal_rhs),
+                false => (&boundary.rhs_ior, &boundary.lhs_ior, normal_rhs),
             };
-
-            let new_dir = intersect2d::refract_ray(
-                &ray.dir.normalized(&URat::from_sig_figs(PREC)),
-                &aligned_normal.normalized(&URat::from_sig_figs(PREC)),
-                leaving_ior,
-                entering_ior,
-            );
+            let new_dir = trace_op("step_ray::refract_ray", || {
+                intersect2d::refract_ray(
+                    &ray.dir.normalized(PREC),
+                    &aligned_normal.normalized(PREC),
+                    leaving_ior,
+                    entering_ior,
+                )
+            });
 
             Ok(Ray {
                 pos: intersection.pos,
@@ -199,64 +224,109 @@ impl Scene {
             })
         } else {
             Err(RayFinished {
-                final_pos: ray.advanced_by(&IRat::from(10000)),
+                final_pos: ray.advanced_by(&IRat::from(0b1000)),
             })
         }
     }
 }
 
 pub fn start() {
+    let ior_a = ior::vacuum();
+    let ior_b = ior::water();
+    let ior_c = ior::olive_oil();
     render_scene(&Scene {
-        light: Vec2::new(0.2, 0.1),
-        boundaries: vec![],
+        light: Vec2::new(0.5, 0.5),
+        boundaries: [
+            Boundary {
+                placement: Ray {
+                    pos: Vec2::new(0.3, 0.),
+                    dir: Vec2::new(0.1, 1.),
+                },
+                lhs_ior: ior_a.clone(),
+                rhs_ior: ior_b.clone(),
+            },
+            Boundary {
+                placement: Ray {
+                    pos: Vec2::new(0.51, 0.),
+                    dir: Vec2::new(0.1, 1.),
+                },
+                lhs_ior: ior_b.clone(),
+                rhs_ior: ior_c.clone(),
+            },
+            Boundary {
+                placement: Ray {
+                    pos: Vec2::new(0.7, 0.),
+                    dir: Vec2::new(0.1, 1.),
+                },
+                lhs_ior: ior_c.clone(),
+                rhs_ior: ior_a.clone(),
+            },
+        ]
+        .to_vec(),
     });
 }
 
 pub fn render_scene(scene: &Scene) {
     use imageproc::drawing;
 
-    let pixels = 128;
+    let pixels = 1024;
 
     let mut img: RgbImage = Image::new(pixels, pixels);
-    let ray_ct = 0;
+    let ray_ct = 64;
 
-    let scene2img = IRat::from(1);
+    let scene2img = IRat::from(pixels);
 
     macro_rules! draw_line {
-        ($start:expr, $end:expr) => {{
-            let a = &$start * &scene2img;
-            let b = &$end * &scene2img;
-            drawing::draw_line_segment_mut(&mut img, a.to_f32s(), b.to_f32s(), Rgb([255; 3]));
-        }};
-    }
-
-    // drawing::draw_line_segment_mut(&mut img, (0., y), (10., y), Rgb([255; 3]));
-    for y in 0..pixels {
-        // let y = y as f32;
-        // drawing::draw_line_segment_mut(&mut img, (0., y), (10., y), Rgb([255; 3]));
-        let y = y as f64;
-        draw_line!(Vec2::new(0.1, y), Vec2::new(1., y));
+        ($start:expr, $end:expr, $col:expr) => {
+            trace_op("render_scene::draw_line", || {
+                let start = &$start;
+                let end = &$end;
+                let a = start.clone().with_y(IRat::one() - &start.y) * &scene2img;
+                let b = end.clone().with_y(IRat::one() - &end.y) * &scene2img;
+                drawing::draw_antialiased_line_segment_mut(
+                    &mut img,
+                    a.to_i32s(),
+                    b.to_i32s(),
+                    Rgb($col),
+                    imageproc::pixelops::interpolate,
+                );
+            })
+        };
     }
 
     for ray_idx in 0..ray_ct {
+        // let dir = Vec2::new(0.1, (ray_idx as f64 - ray_ct as f64 / 2.) / 100.);
+        let angle = 2. * std::f64::consts::PI * ray_idx as f64 / ray_ct as f64;
+        let dir = Vec2::new(angle.cos(), angle.sin());
         let mut ray = Ray {
             pos: scene.light.clone(),
-            dir: Vec2::new(0.1, 0. + ray_idx as f64 / 100.),
+            dir,
         };
 
-        for _ in 0..32 {
-            match scene.step_ray(&ray) {
+        for _ in 0..4 {
+            match trace_op("render_scene::step_ray", || scene.step_ray(&ray)) {
                 Ok(new_ray) => {
-                    draw_line!(ray.pos, new_ray.pos);
+                    draw_line!(ray.pos, new_ray.pos, [255; 3]);
                     ray = new_ray;
                 }
                 Err(finished) => {
-                    draw_line!(ray.pos, finished.final_pos);
+                    // draw_line!(ray.pos, finished.final_pos, [128, 255, 128]);
+                    draw_line!(ray.pos, finished.final_pos, [255; 3]);
                     break;
                 }
             }
         }
     }
 
+    for boundary in &scene.boundaries {
+        draw_line!(
+            boundary.placement.pos,
+            &boundary.placement.dir + &boundary.placement.pos,
+            [255, 128, 128]
+        );
+    }
+
     img.save("raytracer_2d_result.png").unwrap();
+
+    print_trace_time();
 }
