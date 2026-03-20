@@ -5,6 +5,7 @@ use std::{
 
 use dashu_float::{FBig, round::Round};
 use perf_tracer::trace_op;
+use perf_tracer_macros::trace_function;
 
 use crate::{
     derive_binop_by_value, derive_binop_by_value_assymetric,
@@ -489,10 +490,9 @@ impl URat {
     }
 
     /// IMPRECISE
+    #[trace_function("URat::sqrt")]
     pub fn sqrt(&self, prec: Precision) -> Self {
-        trace_op("URat::sqrt", move || {
-            sqrt_algorithms::sqrt_herons_method(self, prec)
-        })
+        sqrt_algorithms::sqrt_herons_method(self, prec)
     }
 
     /// Discards the sign
@@ -567,15 +567,14 @@ impl From<u64> for URat {
 impl Add<&URat> for &URat {
     type Output = URat;
 
+    #[trace_function("URat::add")]
     fn add(self, rhs: &URat) -> Self::Output {
         // a/b + c/d = (ad + bc) / bd
-        trace_op("URat::add", || {
-            let x = trace_op("URat::add::addition_step", || URat {
-                num: &self.num * &rhs.den + &rhs.num * &self.den,
-                den: &self.den * &rhs.den,
-            });
-            trace_op("URat::add::reduction_step", move || x.reduced())
-        })
+        let x = trace_op("URat::add::addition_step", || URat {
+            num: &self.num * &rhs.den + &rhs.num * &self.den,
+            den: &self.den * &rhs.den,
+        });
+        trace_op("URat::add::reduction_step", move || x.reduced())
     }
 }
 derive_binop_by_value!(URat, Add, add, +);
@@ -583,6 +582,7 @@ derive_binop_by_value!(URat, Add, add, +);
 impl Sub<&URat> for &URat {
     type Output = URat;
 
+    #[trace_function("URat::sub")]
     fn sub(self, rhs: &URat) -> Self::Output {
         // a/b - c/d = (ad - bc) / bd
         URat {
@@ -597,6 +597,7 @@ derive_binop_by_value!(URat, Sub, sub, -);
 impl Mul<&URat> for &URat {
     type Output = URat;
 
+    #[trace_function("URat::mul")]
     fn mul(self, rhs: &URat) -> Self::Output {
         URat {
             num: &self.num * &rhs.num,

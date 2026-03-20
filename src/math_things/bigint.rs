@@ -10,7 +10,7 @@ use std::{
 };
 
 use dashu_float::{DBig, FBig};
-use perf_tracer::trace_op;
+use perf_tracer_macros::trace_function;
 
 use crate::derive_binop_by_value;
 
@@ -90,6 +90,7 @@ impl UBig {
     }
 
     #[track_caller]
+    #[trace_function("UBig::div_rem")]
     pub fn div_rem(&self, rhs: &Self) -> (UBig, UBig) {
         div_algorithms::div_rem_binary_long(self, rhs)
     }
@@ -256,12 +257,13 @@ impl UBig {
         self.count_ones() == 1
     }
 
+    #[trace_function("UBig::gcd")]
     pub fn gcd(self, other: Self) -> UBig {
         if self.is_zero() && other.is_zero() {
             return UBig::one();
         }
 
-        trace_op("UBig::gcd", || gcd_algorithms::gcd_binary(self, other))
+        gcd_algorithms::gcd_binary(self, other)
     }
 
     /// Computes the exact sqrt of `self` floored to the nearest integer
@@ -580,8 +582,9 @@ impl ShrAssign<usize> for UBig {
 impl Mul<&UBig> for &UBig {
     type Output = UBig;
 
+    #[trace_function("UBig::mul")]
     fn mul(self, rhs: &UBig) -> Self::Output {
-        trace_op("UBig::mul", move || mul_algorithms::mul_basic(self, rhs))
+        mul_algorithms::mul_basic(self, rhs)
     }
 }
 derive_binop_by_value!(UBig, Mul, mul, *);
@@ -590,8 +593,9 @@ impl Div<&UBig> for &UBig {
     type Output = UBig;
 
     #[inline]
+    #[trace_function("UBig::div")]
     fn div(self, rhs: &UBig) -> Self::Output {
-        trace_op("UBig::div", move || self.div_rem(rhs).0)
+        self.div_rem(rhs).0
     }
 }
 derive_binop_by_value!(UBig, Div, div, /);
@@ -600,8 +604,9 @@ impl Rem<&UBig> for &UBig {
     type Output = UBig;
 
     #[inline]
+    #[trace_function("UBig::rem")]
     fn rem(self, rhs: &UBig) -> Self::Output {
-        trace_op("UBig::rem", move || self.div_rem(rhs).1)
+        self.div_rem(rhs).1
     }
 }
 derive_binop_by_value!(UBig, Rem, rem, %);

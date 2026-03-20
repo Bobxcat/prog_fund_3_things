@@ -1,30 +1,26 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{ItemFn, parse_macro_input};
+use syn::{ItemFn, LitStr, parse_macro_input};
 
 #[proc_macro_attribute]
 pub fn trace_function(attr: TokenStream, input: TokenStream) -> TokenStream {
     let input: ItemFn = parse_macro_input!(input as ItemFn);
+    let trace_name =
+        syn::parse::<LitStr>(attr).map_or_else(|_| input.sig.ident.to_string(), |x| x.value());
 
-    let sig = input.sig.clone();
-    let func_name = &sig.ident;
-    let func_name_str = func_name.to_string();
-    let args = &sig.inputs;
-    let arg_names = args.iter().map(|x| match x {
-        syn::FnArg::Receiver(_) => quote! { self },
-        syn::FnArg::Typed(pat_type) => {
-            let name = &pat_type.pat;
-            quote! { #name }
-        }
-    });
+    let ItemFn {
+        attrs,
+        vis,
+        sig,
+        block,
+    } = input;
 
     quote! {
-        #sig {
-            #input
+        #(#attrs)* #vis #sig {
             ::perf_tracer::trace_op(
-                #func_name_str,
+                #trace_name,
                 move || {
-                    #func_name( #(#arg_names,)* )
+                    #block
                 }
             )
         }

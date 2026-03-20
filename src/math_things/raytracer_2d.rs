@@ -2,7 +2,8 @@ use imageproc::{
     definitions::Image,
     image::{Rgb, RgbImage},
 };
-use perf_tracer::{print_trace_time, trace_op};
+use perf_tracer::print_trace_time;
+use perf_tracer_macros::trace_function;
 
 use crate::math_things::{
     mat2::Mat2,
@@ -13,6 +14,8 @@ use crate::math_things::{
 const PREC: Precision = Precision(128);
 
 mod intersect2d {
+    use perf_tracer_macros::trace_function;
+
     use crate::math_things::{mat2::Mat2, rational::IRat, raytracer_2d::PREC, vec2::Vec2};
 
     /// Returns the position of a line-line intersection
@@ -23,6 +26,7 @@ mod intersect2d {
     /// A different solution:
     /// https://stackoverflow.com/questions/563198/how-do-you-detect-where-two-line-segments-intersect
     #[inline]
+    #[trace_function]
     pub fn intersect_lines(
         a_start: &Vec2,
         a_dir: &Vec2,
@@ -75,6 +79,7 @@ mod intersect2d {
     ///
     /// * `ray_dir` mut be a unit vector
     /// * `surface_normal` mut be a unit vector
+    #[trace_function]
     pub fn refract_ray(
         ray_dir: &Vec2,
         surface_normal: &Vec2,
@@ -165,6 +170,7 @@ struct RayFinished {
 }
 
 impl Scene {
+    #[trace_function("Scene::step_ray")]
     fn step_ray(&self, ray: &Ray) -> Result<Ray, RayFinished> {
         struct IntersectionInfo {
             boundary: usize,
@@ -173,18 +179,16 @@ impl Scene {
         }
         let mut nearest_intersection: Option<IntersectionInfo> = None;
         for (boundary_idx, boundary) in self.boundaries.iter().enumerate() {
-            if let Some(pos) = trace_op("intersect_lines", || {
-                intersect2d::intersect_lines(
-                    &ray.pos,
-                    &(&ray.dir * IRat::from(0b100000000)),
-                    &boundary.placement.pos,
-                    &boundary.placement.dir,
-                    false,
-                    true,
-                    true,
-                    true,
-                )
-            }) {
+            if let Some(pos) = intersect2d::intersect_lines(
+                &ray.pos,
+                &(&ray.dir * IRat::from(0b100000000)),
+                &boundary.placement.pos,
+                &boundary.placement.dir,
+                false,
+                true,
+                true,
+                true,
+            ) {
                 let dist = pos.sqr_dist(&ray.pos);
                 if nearest_intersection
                     .as_ref()
@@ -208,14 +212,12 @@ impl Scene {
                 true => (&boundary.lhs_ior, &boundary.rhs_ior, normal_rhs.negated()),
                 false => (&boundary.rhs_ior, &boundary.lhs_ior, normal_rhs),
             };
-            let new_dir = trace_op("refract_ray", || {
-                intersect2d::refract_ray(
-                    &ray.dir.normalized(PREC),
-                    &aligned_normal.normalized(PREC),
-                    leaving_ior,
-                    entering_ior,
-                )
-            });
+            let new_dir = intersect2d::refract_ray(
+                &ray.dir.normalized(PREC),
+                &aligned_normal.normalized(PREC),
+                leaving_ior,
+                entering_ior,
+            );
 
             Ok(Ray {
                 pos: intersection.pos,
@@ -281,7 +283,7 @@ fn render_scene_inner(scene: &Scene) {
 
     macro_rules! draw_line {
         ($start:expr, $end:expr, $col:expr) => {
-            trace_op("draw_line", || {
+            perf_tracer::trace_op("draw_line", || {
                 let start = &$start;
                 let end = &$end;
                 let a = start.clone().with_y(IRat::one() - &start.y) * &scene2img;
@@ -307,7 +309,7 @@ fn render_scene_inner(scene: &Scene) {
         };
 
         for _ in 0..4 {
-            match trace_op("step_ray", || scene.step_ray(&ray)) {
+            match scene.step_ray(&ray) {
                 Ok(new_ray) => {
                     draw_line!(ray.pos, new_ray.pos, [255; 3]);
                     ray = new_ray;
