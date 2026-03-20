@@ -3,12 +3,11 @@ use std::{
     ops::{Add, Div, Mul, Sub},
 };
 
+use perf_tracer::trace_op;
+
 use crate::{
     derive_binop_by_value, derive_binop_by_value_assymetric,
-    math_things::{
-        rational::{IRat, Precision, URat},
-        trace_op,
-    },
+    math_things::rational::{IRat, Precision, URat},
 };
 
 #[derive(Clone, PartialEq, Eq)]

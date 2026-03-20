@@ -13,6 +13,8 @@ fxhash = "0.2.1"
 imageproc = "0.26.1"
 tinyset = "0.5.2"
 tinyvec = "1.10.0"
+perf_tracer = { path = "perf_tracer" }
+perf_tracer_macros = { path = "perf_tracer_macros" }
 
 [[bench]]
 name = "eight_queens"

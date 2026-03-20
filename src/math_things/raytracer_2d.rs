@@ -2,12 +2,11 @@ use imageproc::{
     definitions::Image,
     image::{Rgb, RgbImage},
 };
+use perf_tracer::{print_trace_time, trace_op};
 
 use crate::math_things::{
     mat2::Mat2,
-    print_trace_time,
     rational::{IRat, Precision},
-    trace_op,
     vec2::Vec2,
 };
 
@@ -174,7 +173,7 @@ impl Scene {
         }
         let mut nearest_intersection: Option<IntersectionInfo> = None;
         for (boundary_idx, boundary) in self.boundaries.iter().enumerate() {
-            if let Some(pos) = trace_op("step_ray::intersect_lines", || {
+            if let Some(pos) = trace_op("intersect_lines", || {
                 intersect2d::intersect_lines(
                     &ray.pos,
                     &(&ray.dir * IRat::from(0b100000000)),
@@ -209,7 +208,7 @@ impl Scene {
                 true => (&boundary.lhs_ior, &boundary.rhs_ior, normal_rhs.negated()),
                 false => (&boundary.rhs_ior, &boundary.lhs_ior, normal_rhs),
             };
-            let new_dir = trace_op("step_ray::refract_ray", || {
+            let new_dir = trace_op("refract_ray", || {
                 intersect2d::refract_ray(
                     &ray.dir.normalized(PREC),
                     &aligned_normal.normalized(PREC),
@@ -267,6 +266,10 @@ pub fn start() {
 }
 
 pub fn render_scene(scene: &Scene) {
+    render_scene_inner(scene)
+}
+
+fn render_scene_inner(scene: &Scene) {
     use imageproc::drawing;
 
     let pixels = 1024;
@@ -278,7 +281,7 @@ pub fn render_scene(scene: &Scene) {
 
     macro_rules! draw_line {
         ($start:expr, $end:expr, $col:expr) => {
-            trace_op("render_scene::draw_line", || {
+            trace_op("draw_line", || {
                 let start = &$start;
                 let end = &$end;
                 let a = start.clone().with_y(IRat::one() - &start.y) * &scene2img;
@@ -304,7 +307,7 @@ pub fn render_scene(scene: &Scene) {
         };
 
         for _ in 0..4 {
-            match trace_op("render_scene::step_ray", || scene.step_ray(&ray)) {
+            match trace_op("step_ray", || scene.step_ray(&ray)) {
                 Ok(new_ray) => {
                     draw_line!(ray.pos, new_ray.pos, [255; 3]);
                     ray = new_ray;

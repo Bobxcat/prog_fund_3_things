@@ -4,10 +4,11 @@ use std::{
 };
 
 use dashu_float::{FBig, round::Round};
+use perf_tracer::trace_op;
 
 use crate::{
     derive_binop_by_value, derive_binop_by_value_assymetric,
-    math_things::{Sign, bigint::UBig, trace_op},
+    math_things::{Sign, bigint::UBig},
 };
 
 #[inline(always)]
@@ -698,11 +699,9 @@ impl Ord for URat {
 
 mod sqrt_algorithms {
     use dashu_base::SquareRoot;
+    use perf_tracer::trace_op;
 
-    use crate::math_things::{
-        rational::{Precision, URat},
-        trace_op,
-    };
+    use crate::math_things::rational::{Precision, URat};
 
     pub fn sqrt_herons_method(s: &URat, prec: Precision) -> URat {
         if s.is_zero() {

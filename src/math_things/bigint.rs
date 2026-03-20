@@ -10,11 +10,9 @@ use std::{
 };
 
 use dashu_float::{DBig, FBig};
+use perf_tracer::trace_op;
 
-use crate::{
-    derive_binop_by_value,
-    math_things::{trace_op, trace_op_time},
-};
+use crate::derive_binop_by_value;
 
 #[derive(Debug, Clone)]
 pub struct UBig {
