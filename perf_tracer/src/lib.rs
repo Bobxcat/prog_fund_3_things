@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     cmp::Reverse,
     collections::HashMap,
     fs::File,
@@ -8,6 +9,7 @@ use std::{
 };
 
 use inferno::flamegraph;
+use parking_lot::ReentrantMutex;
 
 #[derive(Debug, Default)]
 struct Tracer {
@@ -49,7 +51,7 @@ impl Tracer {
 
 const DO_TRACE: bool = true;
 
-static TRACER_INSTANCE: LazyLock<Mutex<Tracer>> = LazyLock::new(Default::default);
+static TRACER_INSTANCE: LazyLock<ReentrantMutex<RefCell<Tracer>>> = LazyLock::new(Default::default);
 
 /// Traces the operation while automatically keeping track of the callstack
 #[inline(always)]
@@ -58,12 +60,13 @@ pub fn trace_op<T>(label: &'static str, op: impl FnOnce() -> T) -> T {
         return op();
     }
 
-    let mut tracer = TRACER_INSTANCE.lock().unwrap();
+    let tracer = TRACER_INSTANCE.lock();
 
-    tracer.trace_callstack_push(label);
+    tracer.borrow_mut().trace_callstack_push(label);
     let start = Instant::now();
     let res = op();
     let t = start.elapsed();
+    let mut tracer = tracer.borrow_mut();
     tracer.trace_op_time(label, t);
     tracer.trace_callstack_pop(t);
     res
@@ -74,7 +77,10 @@ pub fn trace_callstack_push(label: &'static str) {
     if !DO_TRACE {
         return;
     }
-    TRACER_INSTANCE.lock().unwrap().trace_callstack_push(label)
+    TRACER_INSTANCE
+        .lock()
+        .borrow_mut()
+        .trace_callstack_push(label)
 }
 
 #[inline(always)]
@@ -82,7 +88,10 @@ pub fn trace_callstack_pop(time: Duration) {
     if !DO_TRACE {
         return;
     }
-    TRACER_INSTANCE.lock().unwrap().trace_callstack_pop(time)
+    TRACER_INSTANCE
+        .lock()
+        .borrow_mut()
+        .trace_callstack_pop(time)
 }
 
 /// Recommended to use `trace_op` when possible, to avoid manually manipulating the stack
@@ -91,7 +100,10 @@ pub fn trace_op_time(label: &'static str, time: Duration) {
     if !DO_TRACE {
         return;
     }
-    TRACER_INSTANCE.lock().unwrap().trace_op_time(label, time)
+    TRACER_INSTANCE
+        .lock()
+        .borrow_mut()
+        .trace_op_time(label, time)
 }
 
 fn print_cols<const N: usize>(cols: [&[String]; N], pad_after_cols: [usize; N]) {
@@ -112,7 +124,8 @@ fn print_cols<const N: usize>(cols: [&[String]; N], pad_after_cols: [usize; N]) 
 }
 
 pub fn print_trace_time(opts: &PrintOpts) {
-    let tracer = TRACER_INSTANCE.lock().unwrap();
+    let tracer = TRACER_INSTANCE.lock();
+    let tracer = tracer.borrow();
     if opts.print_flat {
         println!("=============");
         println!("Trace Results");
@@ -198,6 +211,7 @@ impl Default for PrintOpts {
 }
 
 pub fn reset_trace() {
-    let mut tracer = TRACER_INSTANCE.lock().unwrap();
+    let tracer = TRACER_INSTANCE.lock();
+    let mut tracer = tracer.borrow_mut();
     tracer.categories.clear();
 }
