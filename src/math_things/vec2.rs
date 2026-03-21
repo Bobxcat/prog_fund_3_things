@@ -4,6 +4,7 @@ use std::{
 };
 
 use perf_tracer::trace_op;
+use perf_tracer_macros::trace_function;
 
 use crate::{
     derive_binop_by_value, derive_binop_by_value_assymetric,
@@ -56,6 +57,7 @@ impl Vec2 {
     }
 
     /// Returns `(self.x, self.y)` as their float representations
+    #[trace_function("Vec2::to_f64s")]
     pub fn to_f64s(&self) -> (f64, f64) {
         (self.x.to_f64(), self.y.to_f64())
     }
@@ -79,6 +81,7 @@ impl Vec2 {
     }
 
     /// IMPRECISE
+    #[trace_function("Vec2::magnitude")]
     pub fn magnitude(&self, prec: Precision) -> IRat {
         self.sqr_magnitude().sqrt(prec)
     }
@@ -96,13 +99,15 @@ impl Vec2 {
 
     /// IMPRECISE
     #[must_use]
+    #[trace_function("Vec2::normalized")]
     pub fn normalized(&self, prec: Precision) -> Self {
-        trace_op("Vec2::normalized", move || self / self.magnitude(prec))
+        self / self.magnitude(prec)
     }
 
     /// Returns this vector reflected across `normal`
     /// * `self` and `normal` should be unit vectors
     #[must_use]
+    #[trace_function("Vec2::reflected")]
     pub fn reflected(&self, normal: &Self) -> Vec2 {
         // https://en.wikipedia.org/wiki/Specular_reflection#Vector_formulation
         self - IRat::from(2u64) * normal * (normal.dot(self))
@@ -111,6 +116,7 @@ impl Vec2 {
     /// Performs `self ^ other`, otherwise known as the 2d wedge product or the perp dot product:
     ///
     /// https://mathworld.wolfram.com/PerpDotProduct.html
+    #[trace_function("Vec2::cross")]
     pub fn cross(&self, other: &Self) -> IRat {
         &self.x * &other.y - &self.y * &other.x
     }

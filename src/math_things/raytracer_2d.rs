@@ -267,13 +267,23 @@ pub fn start() {
     });
 }
 
+#[trace_function]
+fn draw_line_segment_mut(img: &mut RgbImage, start: (i32, i32), end: (i32, i32), color: [u8; 3]) {
+    imageproc::drawing::draw_antialiased_line_segment_mut(
+        img,
+        start,
+        end,
+        Rgb(color),
+        imageproc::pixelops::interpolate,
+    );
+}
+
+#[trace_function]
 pub fn render_scene(scene: &Scene) {
     render_scene_inner(scene)
 }
 
 fn render_scene_inner(scene: &Scene) {
-    use imageproc::drawing;
-
     let pixels = 1024;
 
     let mut img: RgbImage = Image::new(pixels, pixels);
@@ -288,13 +298,7 @@ fn render_scene_inner(scene: &Scene) {
                 let end = &$end;
                 let a = start.clone().with_y(IRat::one() - &start.y) * &scene2img;
                 let b = end.clone().with_y(IRat::one() - &end.y) * &scene2img;
-                drawing::draw_antialiased_line_segment_mut(
-                    &mut img,
-                    a.to_i32s(),
-                    b.to_i32s(),
-                    Rgb($col),
-                    imageproc::pixelops::interpolate,
-                );
+                draw_line_segment_mut(&mut img, a.to_i32s(), b.to_i32s(), $col);
             })
         };
     }
@@ -333,5 +337,5 @@ fn render_scene_inner(scene: &Scene) {
 
     img.save("raytracer_2d_result.png").unwrap();
 
-    print_trace_time();
+    print_trace_time(&perf_tracer::PrintOpts::default());
 }

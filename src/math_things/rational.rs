@@ -701,9 +701,11 @@ impl Ord for URat {
 mod sqrt_algorithms {
     use dashu_base::SquareRoot;
     use perf_tracer::trace_op;
+    use perf_tracer_macros::trace_function;
 
     use crate::math_things::rational::{Precision, URat};
 
+    #[trace_function]
     pub fn sqrt_herons_method(s: &URat, prec: Precision) -> URat {
         if s.is_zero() {
             return URat::zero();
@@ -716,15 +718,13 @@ mod sqrt_algorithms {
 
         let mut i = 0;
         while i < 512 {
-            let mut next_guess = trace_op("sqrt_herons_method::next_guess_calc", || {
-                (&guess + s / &guess) / 2
-            });
+            let mut next_guess = trace_op("next_guess_calc", || (&guess + s / &guess) / 2);
 
             next_guess.round(prec_with_guard);
 
             // The change between guesses is at most the
             // absolute error of the current guess
-            if trace_op("sqrt_herons_method::difference_comparison", || {
+            if trace_op("difference_comparison", || {
                 next_guess.abs_difference(&guess) < prec_num
             }) {
                 break;
