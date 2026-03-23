@@ -1,9 +1,11 @@
 use std::{
+    f64::consts::FRAC_PI_4,
     ops::{Add, Mul, Neg},
     sync::mpsc,
 };
 
-use imageproc::image::{Rgb, RgbImage};
+use imageproc::image::{self, Rgb, RgbImage};
+use minifb::{Key, Window, WindowOptions};
 use perf_tracer_macros::trace_function;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 
@@ -212,12 +214,9 @@ impl Color {
     }
 }
 
-impl<T> From<Rgb<T>> for Color
-where
-    T: Into<f64>,
-{
-    fn from(value: Rgb<T>) -> Self {
-        Self(value.0.map(|x| x.into()))
+impl From<Rgb<u8>> for Color {
+    fn from(value: Rgb<u8>) -> Self {
+        Self(value.0.map(|x| x as f64 / 256.))
     }
 }
 
@@ -243,6 +242,7 @@ impl Add for Color {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Scene3d {
     sky_ior: IRat,
     sky_color: Color,
@@ -255,12 +255,10 @@ pub struct RaycastResult {
 
 impl Scene3d {
     pub fn cast_ray(&self, ray: Ray3, max_bounces: usize) -> Color {
-        println!("ffff");
         self.cast_ray_inner(ray, self.sky_ior.clone(), max_bounces)
     }
 
     fn cast_ray_inner(&self, ray: Ray3, curr_ior: IRat, rem_bounces: usize) -> Color {
-        println!("rem_bounces={rem_bounces}; ray={ray:?}");
         if rem_bounces == 0 {
             return self.sky_color;
         }
@@ -309,65 +307,157 @@ impl Scene3d {
 
         diffuse_portion * hit_mesh.opacity + refracted_portion * (1. - hit_mesh.opacity)
     }
+
+    /// How to use:
+    /// ```
+    /// let scene: Scene3d;
+    /// let settings: RenderSettings;
+    /// let mut img;
+    /// for (pixel, color) in scene.render(&settings) {
+    ///     img.set_pixel(pixel, color);
+    /// }
+    /// ```
+    fn render(&self, settings: &RenderSettings) -> mpsc::Receiver<((u32, u32), Rgb<u8>)> {
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let this: Scene3d = self.clone();
+        let settings: RenderSettings = settings.clone();
+        std::thread::spawn(move || this.render_blocking(&settings, finished_tx));
+        finished_rx
+    }
+
+    fn render_blocking(
+        &self,
+        settings: &RenderSettings,
+        finished_tx: mpsc::Sender<((u32, u32), Rgb<u8>)>,
+    ) {
+        let pixels_iter = (0..settings.width)
+            .flat_map(|x| (0..settings.height).map(move |y| (x, y)))
+            .par_bridge();
+        pixels_iter.for_each_with(finished_tx, |finished_tx, pixel| {
+            let ray = Ray3 {
+                pos: Vec3::splat(0),
+                dir: Vec3::from_spherical_coords_inexact(
+                    // The screen coordinates start at the top, so the elevation starts at the top and decreases
+                    (0.5 * settings.height as f64 - pixel.1 as f64) / settings.height as f64
+                        * settings.fov_h,
+                    (pixel.0 as f64 - 0.5 * settings.width as f64) / settings.width as f64
+                        * settings.fov_w,
+                ),
+            };
+
+            let final_color: Rgb<u8> = self.cast_ray(ray, 4).into();
+            if let Err(_) = finished_tx.send((pixel, final_color)) {
+                return;
+            }
+        });
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RenderSettings {
+    pub width: u32,
+    pub height: u32,
+    pub fov_w: f64,
+    pub fov_h: f64,
 }
 
 #[trace_function]
-pub fn start() {
+pub fn start(write_to_window: bool) {
     let scene = Scene3d {
         sky_ior: IRat::one(),
         sky_color: Color([0.5; 3]),
-        meshes: [Mesh3d {
-            opacity: 0.8,
-            color: Rgb([180, 100, 100]),
-            index_of_refraction: IRat::from(1.2),
-            vtx: [
-                Vec3::new(0, 0, 5),
-                Vec3::new(0.7, 1, 5),
-                Vec3::new(1, -0.2, 5),
-            ]
-            .into(),
-            tris: [[0, 1, 2]].into(),
-        }]
+        meshes: [
+            Mesh3d {
+                opacity: 0.8,
+                color: Rgb([180, 100, 100]),
+                index_of_refraction: IRat::from(1.2),
+                vtx: [
+                    Vec3::new(0, 0, 5),
+                    Vec3::new(0.7, 1, 5),
+                    Vec3::new(1, -0.2, 5),
+                ]
+                .into(),
+                tris: [[0, 1, 2]].into(),
+            },
+            Mesh3d {
+                opacity: 0.8,
+                color: Rgb([0, 0, 255]),
+                index_of_refraction: IRat::from(1.),
+                vtx: [
+                    Vec3::new(0.2, 0, 10),
+                    Vec3::new(0.7, 1, 10),
+                    Vec3::new(1, -1., 10),
+                ]
+                .into(),
+                tris: [[0, 1, 2]].into(),
+            },
+        ]
         .into(),
     };
 
-    let (width, height) = (128, 64);
-    let fov_w = std::f64::consts::FRAC_PI_4;
-    let fov_h = std::f64::consts::FRAC_PI_4 / 2.;
+    let w = 128;
+    let settings = RenderSettings {
+        width: w,
+        height: w / 2,
+        fov_w: FRAC_PI_4,
+        fov_h: FRAC_PI_4 / 2.,
+    };
 
-    let mut img = RgbImage::from_pixel(width, height, scene.sky_color.into());
+    let mut img = RgbImage::from_pixel(settings.width, settings.height, Rgb([0; 3]));
 
-    let (finished_tx, finished_rx) = mpsc::channel();
+    match write_to_window {
+        true => {
+            let pixels_rx = scene.render(&settings);
+            let window_width = 1024;
+            let window_height = (window_width * settings.height) / settings.width;
 
-    let pixels_iter = (0..width)
-        .flat_map(|x| (0..height).map(move |y| (x, y)))
-        .par_bridge();
-    pixels_iter.for_each_with(finished_tx, |finished_tx, pixel| {
-        let ray = Ray3 {
-            pos: Vec3::splat(0),
-            dir: Vec3::from_spherical_coords_inexact(
-                (pixel.1 as f64 - 0.5 * height as f64) / height as f64 * fov_h,
-                (pixel.0 as f64 - 0.5 * width as f64) / width as f64 * fov_w,
-            ),
-        };
+            let mut window = Window::new(
+                "Render Progress",
+                window_width as usize,
+                window_height as usize,
+                WindowOptions::default(),
+            )
+            .unwrap();
+            window.set_target_fps(30);
 
-        let final_color: Rgb<u8> = scene.cast_ray(ray, 4).into();
-        finished_tx.send((pixel, final_color)).unwrap();
-    });
+            'outer: while window.is_open() && !window.is_key_down(Key::Escape) {
+                loop {
+                    let (pixel, color) = match pixels_rx.try_recv() {
+                        Ok(x) => x,
+                        Err(mpsc::TryRecvError::Empty) => break,
+                        Err(mpsc::TryRecvError::Disconnected) => break 'outer,
+                    };
+                    *img.get_pixel_mut(pixel.0, pixel.1) = color;
+                }
 
-    for (pixel, color) in finished_rx {
-        println!("px={pixel:?}; color={color:?}");
-        let pixel_mut = img.get_pixel_mut(pixel.0, height - pixel.1 - 1);
-        *pixel_mut = color;
+                /// From `minifb::Window::update_with_buffer` example
+                fn from_u8_rgb(r: u8, g: u8, b: u8) -> u32 {
+                    let (r, g, b) = (r as u32, g as u32, b as u32);
+                    (r << 16) | (g << 8) | b
+                }
+
+                let buffer = image::imageops::resize(
+                    &img,
+                    window_width,
+                    window_height,
+                    image::imageops::FilterType::Nearest,
+                );
+                let buffer = buffer
+                    .pixels()
+                    .map(|px| from_u8_rgb(px[0], px[1], px[2]))
+                    .collect::<Vec<_>>();
+
+                window
+                    .update_with_buffer(&buffer, window_width as usize, window_height as usize)
+                    .unwrap();
+            }
+        }
+        false => {
+            for (pixel, color) in scene.render(&settings) {
+                *img.get_pixel_mut(pixel.0, pixel.1) = color;
+            }
+        }
     }
-
-    for pixel in (0..width).flat_map(|x| (0..height).map(move |y| (x, y))) {
-        // println!("pixel({},{})", pixel.0, pixel.1);
-        // println!("{ray:?}");
-
-        // println!();
-    }
-    // println!("\n\n\n\n\n");
 
     img.save("raytracer_3d_result.png").unwrap();
 }

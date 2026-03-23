@@ -16,6 +16,7 @@ tinyvec = "1.10.0"
 perf_tracer = { path = "perf_tracer" }
 perf_tracer_macros = { path = "perf_tracer_macros" }
 rayon = "1.11.0"
+minifb = "0.28.0"
 
 [[bench]]
 name = "eight_queens"

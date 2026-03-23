@@ -98,6 +98,10 @@ impl Vec2 {
     }
 
     /// IMPRECISE
+    ///
+    /// The returned value will not be normalized.
+    /// If you want an exactly normalized vector without maintaining exact direction, use
+    /// `nearby_normalized`
     #[must_use]
     #[trace_function("Vec2::normalized")]
     pub fn normalized(&self, prec: Precision) -> Self {
@@ -119,6 +123,49 @@ impl Vec2 {
     #[trace_function("Vec2::cross")]
     pub fn cross(&self, other: &Self) -> IRat {
         &self.x * &other.y - &self.y * &other.x
+    }
+
+    /// Finds a point nearby `self` on the unit sphere
+    #[trace_function("Vec2::nearby_normalized")]
+    pub fn nearby_normalized(&self, prec: Precision) -> Vec2 {
+        Self::nearby_normalized_inner(self, prec)
+    }
+
+    /// Requires `pt` to be in the first quadrant
+    fn nearby_normalized_inner(pt: &Vec2, prec: Precision) -> Vec2 {
+        // https://en.wikipedia.org/wiki/Pythagorean_triple#Rational_points_on_a_unit_circle
+        // Using the parametric equation, an appropriately accurate value of t can be found
+        // for a point P in quadrant 1 by a binary search:
+        // Starting with a=0,b=1 perform a->avg(a,b) if b is closer than a, else perform b->avg(a,b)
+
+        let mut a = IRat::zero();
+        let mut a_pt = Vec2::new(1, 0);
+        let mut a_dist = a_pt.sqr_dist(pt);
+
+        let mut b = IRat::one();
+        let mut b_pt = Vec2::new(0, 1);
+        let mut b_dist = b_pt.sqr_dist(pt);
+
+        // * Each step doubles the precision, so for `n` steps,
+        // the precision is a quarter of a circle / 2^n
+        // * Since the points are further apart at t=0, the worst case
+        // of the innacuracy is `dist(P(1/2^n), P(0))` where P is the point at a given t value
+        // * Since `P(0)=(1,0)`, `dist(P(1/2^n), P(0))` is approximately `P(1/2^n).y`
+        // `P(t).y = 2t / (1+t^2)` and near t=0, `P(t).x ~ 2t` so `P(1/2^n).y ~ 1/2^(n-1)`
+        // * To conclude, the worst case precision for `n` steps is approximately `1/2 ^ (n-1)`
+        // *
+
+        for _ in 0..16 {
+            match b_dist > a_dist {
+                true => todo!(),
+                false => todo!(),
+            }
+        }
+
+        match b_dist > a_dist {
+            true => a_pt,
+            false => b_pt,
+        }
     }
 }
 
