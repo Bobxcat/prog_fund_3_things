@@ -63,6 +63,15 @@ impl std::fmt::Debug for IRat {
     }
 }
 
+impl std::fmt::Display for IRat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.sign {
+            Sign::Pos => write!(f, "{}", self.magnitude),
+            Sign::Neg => write!(f, "-{}", self.magnitude),
+        }
+    }
+}
+
 impl IRat {
     pub fn new(magnitude: URat, sign: Sign) -> Self {
         Self { magnitude, sign }
@@ -85,6 +94,10 @@ impl IRat {
             magnitude: URat::one(),
             sign: Sign::Pos,
         }
+    }
+
+    pub fn abs(self) -> IRat {
+        IRat::new(self.magnitude, Sign::Pos)
     }
 
     pub fn abs_unsigned(self) -> URat {
@@ -291,6 +304,7 @@ derive_binop_by_value_assymetric!(IRat, UBig, Mul, mul, *);
 impl Div<&IRat> for &IRat {
     type Output = IRat;
 
+    #[track_caller]
     fn div(self, rhs: &IRat) -> Self::Output {
         IRat {
             magnitude: &self.magnitude / &rhs.magnitude,
@@ -345,7 +359,15 @@ impl std::fmt::Debug for URat {
 
 impl std::fmt::Display for URat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}/{}", self.num, self.den)
+        write!(
+            f,
+            "{}",
+            self.to_fbig()
+                .with_precision(f.precision().unwrap_or(32))
+                .value()
+                .to_decimal()
+                .value()
+        )
     }
 }
 
@@ -405,29 +427,10 @@ impl URat {
     /// Panics if the denominator is zero
     #[must_use]
     #[track_caller]
+    #[trace_function("URat::reduced")]
     pub fn reduced(&self) -> Self {
         assert!(!self.den.is_zero());
         let divisor = UBig::gcd(self.num.clone(), self.den.clone());
-        debug_assert_eq!(
-            self.num,
-            (&self.num / &divisor) * &divisor,
-            "GCD does not divide numerator:\nnum={}\nden={}\ngcd={}\num/gcd = {}\n(num/gcd)*gcd={}",
-            self.num,
-            self.den,
-            divisor,
-            &self.num / &divisor,
-            (&self.num / &divisor) * &divisor,
-        );
-        debug_assert_eq!(
-            self.den,
-            (&self.den / &divisor) * &divisor,
-            "GCD does not divide denominator:\nnum={}\nden={}\ngcd={}\nden/gcd = {}\n(den/gcd)*gcd={}",
-            self.num,
-            self.den,
-            divisor,
-            &self.den / &divisor,
-            (&self.den / &divisor) * &divisor,
-        );
         Self {
             num: &self.num / &divisor,
             den: &self.den / &divisor,
@@ -498,6 +501,7 @@ impl URat {
     /// Discards the sign
     ///
     /// A non-normal `x` will result in `0` being returned
+    #[trace_function("URat::from_f64")]
     pub fn from_f64(x: f64) -> URat {
         match x.classify() {
             // FIXME: Should this panic instead?
@@ -538,6 +542,7 @@ impl URat {
     }
 
     /// Discards the sign
+    #[trace_function("URat::from_fbig")]
     pub fn from_fbig<RoundingMode: Round, const BASE: u64>(x: FBig<RoundingMode, BASE>) -> URat {
         IRat::from_fbig(x).abs_unsigned()
     }
@@ -570,11 +575,11 @@ impl Add<&URat> for &URat {
     #[trace_function("URat::add")]
     fn add(self, rhs: &URat) -> Self::Output {
         // a/b + c/d = (ad + bc) / bd
-        let x = trace_op("URat::add::addition_step", || URat {
+        let x = trace_op("addition_step", || URat {
             num: &self.num * &rhs.den + &rhs.num * &self.den,
             den: &self.den * &rhs.den,
         });
-        trace_op("URat::add::reduction_step", move || x.reduced())
+        trace_op("reduction_step", move || x.reduced())
     }
 }
 derive_binop_by_value!(URat, Add, add, +);

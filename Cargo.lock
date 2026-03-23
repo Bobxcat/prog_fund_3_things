@@ -1403,6 +1403,7 @@ dependencies = [
  "imageproc",
  "perf_tracer",
  "perf_tracer_macros",
+ "rayon",
  "tinyset",
  "tinyvec",
 ]

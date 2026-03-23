@@ -110,7 +110,7 @@ impl Vec2 {
     #[trace_function("Vec2::reflected")]
     pub fn reflected(&self, normal: &Self) -> Vec2 {
         // https://en.wikipedia.org/wiki/Specular_reflection#Vector_formulation
-        self - IRat::from(2u64) * normal * (normal.dot(self))
+        self - IRat::from(2u64) * normal * normal.dot(self)
     }
 
     /// Performs `self ^ other`, otherwise known as the 2d wedge product or the perp dot product:

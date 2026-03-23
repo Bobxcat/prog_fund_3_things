@@ -16,7 +16,9 @@ const PREC: Precision = Precision(128);
 mod intersect2d {
     use perf_tracer_macros::trace_function;
 
-    use crate::math_things::{mat2::Mat2, rational::IRat, raytracer_2d::PREC, vec2::Vec2};
+    use crate::math_things::{
+        le_or_lt, mat2::Mat2, rational::IRat, raytracer_2d::PREC, vec2::Vec2,
+    };
 
     /// Returns the position of a line-line intersection
     ///
@@ -52,20 +54,10 @@ mod intersect2d {
         let Vec2 { x: s, y: neg_t } = mat_inv * v;
         let t = -neg_t;
 
-        /// Computes `lower < upper` if `closed == false`,
-        /// or `lower <= upper` if `closed == true`
-        #[inline]
-        fn ge_or_gt(lower: &IRat, upper: &IRat, closed: bool) -> bool {
-            match closed {
-                true => lower <= upper,
-                false => lower < upper,
-            }
-        }
-
-        if ge_or_gt(&IRat::zero(), &t, a_start_included)
-            && ge_or_gt(&t, &IRat::one(), a_end_included)
-            && ge_or_gt(&IRat::zero(), &s, b_start_included)
-            && ge_or_gt(&s, &IRat::one(), b_end_included)
+        if le_or_lt(&IRat::zero(), &t, a_start_included)
+            && le_or_lt(&t, &IRat::one(), a_end_included)
+            && le_or_lt(&IRat::zero(), &s, b_start_included)
+            && le_or_lt(&s, &IRat::one(), b_end_included)
         {
             Some(a_start + t * a_dir)
         } else {
@@ -129,12 +121,12 @@ mod ior {
 }
 
 #[derive(Debug, Clone)]
-pub struct Ray {
+pub struct Ray2 {
     pub pos: Vec2,
     pub dir: Vec2,
 }
 
-impl Ray {
+impl Ray2 {
     fn normal_rhs(&self) -> Vec2 {
         Mat2::rotation_270() * &self.dir
     }
@@ -150,7 +142,7 @@ impl Ray {
 #[derive(Debug, Clone)]
 pub struct Boundary {
     /// The placement and size of the boundary
-    pub placement: Ray,
+    pub placement: Ray2,
     pub lhs_ior: IRat,
     pub rhs_ior: IRat,
 }
@@ -171,7 +163,7 @@ struct RayFinished {
 
 impl Scene {
     #[trace_function("Scene::step_ray")]
-    fn step_ray(&self, ray: &Ray) -> Result<Ray, RayFinished> {
+    fn step_ray(&self, ray: &Ray2) -> Result<Ray2, RayFinished> {
         struct IntersectionInfo {
             boundary: usize,
             pos: Vec2,
@@ -219,7 +211,7 @@ impl Scene {
                 entering_ior,
             );
 
-            Ok(Ray {
+            Ok(Ray2 {
                 pos: intersection.pos,
                 dir: new_dir,
             })
@@ -239,7 +231,7 @@ pub fn start() {
         light: Vec2::new(0.5, 0.5),
         boundaries: [
             Boundary {
-                placement: Ray {
+                placement: Ray2 {
                     pos: Vec2::new(0.3, 0.),
                     dir: Vec2::new(0.1, 1.),
                 },
@@ -247,7 +239,7 @@ pub fn start() {
                 rhs_ior: ior_b.clone(),
             },
             Boundary {
-                placement: Ray {
+                placement: Ray2 {
                     pos: Vec2::new(0.51, 0.),
                     dir: Vec2::new(0.1, 1.),
                 },
@@ -255,7 +247,7 @@ pub fn start() {
                 rhs_ior: ior_c.clone(),
             },
             Boundary {
-                placement: Ray {
+                placement: Ray2 {
                     pos: Vec2::new(0.7, 0.),
                     dir: Vec2::new(0.1, 1.),
                 },
@@ -307,7 +299,7 @@ fn render_scene_inner(scene: &Scene) {
         // let dir = Vec2::new(0.1, (ray_idx as f64 - ray_ct as f64 / 2.) / 100.);
         let angle = 2. * std::f64::consts::PI * ray_idx as f64 / ray_ct as f64;
         let dir = Vec2::new(angle.cos(), angle.sin());
-        let mut ray = Ray {
+        let mut ray = Ray2 {
             pos: scene.light.clone(),
             dir,
         };

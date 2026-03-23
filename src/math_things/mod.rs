@@ -6,13 +6,19 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::math_things::rational::IRat;
+
 pub mod bigint;
 pub mod mat2;
 pub mod rational;
 pub mod raytracer_2d;
+pub mod raytracer_3d;
 pub mod vec2;
+pub mod vec3;
 
 /// Assumes a `impl Op<&ty> for &ty { ... }`
+///
+/// `ty, tr, func, op`
 #[macro_export]
 macro_rules! derive_binop_by_value {
     ($ty:ident, $tr:ident, $func:ident, $op:tt) => {
@@ -20,6 +26,7 @@ macro_rules! derive_binop_by_value {
             type Output = $ty;
 
             #[inline]
+            #[track_caller]
             fn $func(self, rhs: $ty) -> Self::Output {
                 self $op &rhs
             }
@@ -29,6 +36,7 @@ macro_rules! derive_binop_by_value {
             type Output = $ty;
 
             #[inline]
+            #[track_caller]
             fn $func(self, rhs: &$ty) -> Self::Output {
                 &self $op rhs
             }
@@ -38,6 +46,7 @@ macro_rules! derive_binop_by_value {
             type Output = $ty;
 
             #[inline]
+            #[track_caller]
             fn $func(self, rhs: $ty) -> Self::Output {
                 &self $op &rhs
             }
@@ -46,6 +55,8 @@ macro_rules! derive_binop_by_value {
 }
 
 /// Assumes a `impl Op<&other_ty> for &impl_ty { ... }`
+///
+/// `impl_ty, other_ty, tr, func, op`
 #[macro_export]
 macro_rules! derive_binop_by_value_assymetric {
     ($impl_ty:ident, $other_ty:ident, $tr:ident, $func:ident, $op:tt) => {
@@ -53,6 +64,7 @@ macro_rules! derive_binop_by_value_assymetric {
         impl $tr<$other_ty> for &$impl_ty {
             type Output = $impl_ty;
             #[inline]
+            #[track_caller]
             fn $func(self, rhs: $other_ty) -> Self::Output {
                 self $op &rhs
             }
@@ -60,6 +72,7 @@ macro_rules! derive_binop_by_value_assymetric {
         impl $tr<&$other_ty> for $impl_ty {
             type Output = $impl_ty;
             #[inline]
+            #[track_caller]
             fn $func(self, rhs: &$other_ty) -> Self::Output {
                 &self $op rhs
             }
@@ -67,6 +80,7 @@ macro_rules! derive_binop_by_value_assymetric {
         impl $tr<$other_ty> for $impl_ty {
             type Output = $impl_ty;
             #[inline]
+            #[track_caller]
             fn $func(self, rhs: $other_ty) -> Self::Output {
                 &self $op &rhs
             }
@@ -76,6 +90,7 @@ macro_rules! derive_binop_by_value_assymetric {
         impl $tr<&$impl_ty> for &$other_ty {
             type Output = $impl_ty;
             #[inline]
+            #[track_caller]
             fn $func(self, rhs: &$impl_ty) -> Self::Output {
                 rhs $op self
             }
@@ -83,6 +98,7 @@ macro_rules! derive_binop_by_value_assymetric {
         impl $tr<$impl_ty> for &$other_ty {
             type Output = $impl_ty;
             #[inline]
+            #[track_caller]
             fn $func(self, rhs: $impl_ty) -> Self::Output {
                 &rhs $op self
             }
@@ -90,6 +106,7 @@ macro_rules! derive_binop_by_value_assymetric {
         impl $tr<&$impl_ty> for $other_ty {
             type Output = $impl_ty;
             #[inline]
+            #[track_caller]
             fn $func(self, rhs: &$impl_ty) -> Self::Output {
                 rhs $op &self
             }
@@ -97,6 +114,7 @@ macro_rules! derive_binop_by_value_assymetric {
         impl $tr<$impl_ty> for $other_ty {
             type Output = $impl_ty;
             #[inline]
+            #[track_caller]
             fn $func(self, rhs: $impl_ty) -> Self::Output {
                 &rhs $op &self
             }
@@ -136,5 +154,25 @@ impl Neg for Sign {
             Sign::Pos => Sign::Neg,
             Sign::Neg => Sign::Pos,
         }
+    }
+}
+
+/// Computes `lower < upper` if `closed == false`,
+/// or `lower <= upper` if `closed == true`
+#[inline]
+pub(crate) fn le_or_lt(lower: &IRat, upper: &IRat, closed: bool) -> bool {
+    match closed {
+        true => lower <= upper,
+        false => lower < upper,
+    }
+}
+
+/// Computes `lower < upper` if `closed == false`,
+/// or `lower <= upper` if `closed == true`
+#[inline]
+pub(crate) fn ge_or_gt(upper: &IRat, lower: &IRat, closed: bool) -> bool {
+    match closed {
+        true => lower <= upper,
+        false => lower < upper,
     }
 }

@@ -11,35 +11,18 @@ use std::{
 use inferno::flamegraph;
 use parking_lot::ReentrantMutex;
 
+const DO_TRACE: bool = true;
+
+/// Stored as a `static` singleton
+///
+/// Accumulates the trace times from all threads
 #[derive(Debug, Default)]
-struct Tracer {
+struct TracerAccumulator {
     categories: HashMap<&'static str, Duration>,
     callstack_trace: HashMap<Vec<&'static str>, Duration>,
-    callstack: Vec<&'static str>,
 }
 
-impl Tracer {
-    #[inline(always)]
-    fn trace_callstack_push(&mut self, label: &'static str) {
-        if !DO_TRACE {
-            return;
-        }
-        self.callstack.push(label);
-    }
-
-    #[inline(always)]
-    fn trace_callstack_pop(&mut self, time: Duration) {
-        if !DO_TRACE {
-            return;
-        }
-        let stack = self.callstack.clone();
-        self.callstack_trace
-            .entry(stack)
-            .or_default()
-            .add_assign(time);
-        self.callstack.pop();
-    }
-
+impl TracerAccumulator {
     #[inline(always)]
     fn trace_op_time(&mut self, label: &'static str, time: Duration) {
         if !DO_TRACE {
@@ -49,9 +32,42 @@ impl Tracer {
     }
 }
 
-const DO_TRACE: bool = true;
+/// Stored thread-locally
+#[derive(Debug, Default)]
+struct TracerCallstack {
+    callstack: Vec<&'static str>,
+}
 
-static TRACER_INSTANCE: LazyLock<ReentrantMutex<RefCell<Tracer>>> = LazyLock::new(Default::default);
+impl TracerCallstack {
+    fn push(&mut self, label: &'static str) {
+        if !DO_TRACE {
+            return;
+        }
+        self.callstack.push(label);
+    }
+
+    fn pop(&mut self, accum: &mut TracerAccumulator, time: Duration) {
+        if !DO_TRACE {
+            return;
+        }
+        // The hot path is for the entry to already be present
+        match accum.callstack_trace.get_mut(&self.callstack) {
+            Some(t) => *t += time,
+            None => {
+                accum.callstack_trace.insert(self.callstack.clone(), time);
+            }
+        }
+        self.callstack.pop();
+    }
+}
+
+/// We can't use a reentrant mutex and hold across an operation because that doesn't work if the operation spawns another thread
+///
+/// The callstack is tracked seperately and thread-locally
+static TRACER_ACCUMULATOR: LazyLock<Mutex<TracerAccumulator>> = LazyLock::new(Default::default);
+thread_local! {
+    static TRACER_CALLSTACK: RefCell<TracerCallstack> = RefCell::default();
+}
 
 /// Traces the operation while automatically keeping track of the callstack
 #[inline(always)]
@@ -60,50 +76,15 @@ pub fn trace_op<T>(label: &'static str, op: impl FnOnce() -> T) -> T {
         return op();
     }
 
-    let tracer = TRACER_INSTANCE.lock();
+    TRACER_CALLSTACK.with_borrow_mut(|stack| stack.push(label));
 
-    tracer.borrow_mut().trace_callstack_push(label);
     let start = Instant::now();
     let res = op();
     let t = start.elapsed();
-    let mut tracer = tracer.borrow_mut();
-    tracer.trace_op_time(label, t);
-    tracer.trace_callstack_pop(t);
+    let mut accum = TRACER_ACCUMULATOR.lock().unwrap();
+    accum.trace_op_time(label, t);
+    TRACER_CALLSTACK.with_borrow_mut(|stack| stack.pop(&mut accum, t));
     res
-}
-
-#[inline(always)]
-pub fn trace_callstack_push(label: &'static str) {
-    if !DO_TRACE {
-        return;
-    }
-    TRACER_INSTANCE
-        .lock()
-        .borrow_mut()
-        .trace_callstack_push(label)
-}
-
-#[inline(always)]
-pub fn trace_callstack_pop(time: Duration) {
-    if !DO_TRACE {
-        return;
-    }
-    TRACER_INSTANCE
-        .lock()
-        .borrow_mut()
-        .trace_callstack_pop(time)
-}
-
-/// Recommended to use `trace_op` when possible, to avoid manually manipulating the stack
-#[inline(always)]
-pub fn trace_op_time(label: &'static str, time: Duration) {
-    if !DO_TRACE {
-        return;
-    }
-    TRACER_INSTANCE
-        .lock()
-        .borrow_mut()
-        .trace_op_time(label, time)
 }
 
 fn print_cols<const N: usize>(cols: [&[String]; N], pad_after_cols: [usize; N]) {
@@ -124,8 +105,7 @@ fn print_cols<const N: usize>(cols: [&[String]; N], pad_after_cols: [usize; N]) 
 }
 
 pub fn print_trace_time(opts: &PrintOpts) {
-    let tracer = TRACER_INSTANCE.lock();
-    let tracer = tracer.borrow();
+    let tracer = TRACER_ACCUMULATOR.lock().unwrap();
     if opts.print_flat {
         println!("=============");
         println!("Trace Results");
@@ -211,7 +191,6 @@ impl Default for PrintOpts {
 }
 
 pub fn reset_trace() {
-    let tracer = TRACER_INSTANCE.lock();
-    let mut tracer = tracer.borrow_mut();
+    let mut tracer = TRACER_ACCUMULATOR.lock().unwrap();
     tracer.categories.clear();
 }
