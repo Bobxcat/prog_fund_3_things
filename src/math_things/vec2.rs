@@ -181,6 +181,12 @@ impl Vec2 {
         let mut b_pt = Vec2::new(0, 1);
         let mut b_dist = b_pt.sqr_dist(pt);
 
+        // CORRECTION:
+        // * Binary search does not work (only stochastically for cases already near the unit circle):
+        // * Fundamentally, the question is of minimizing the function from t=[0,1]: `D(t)=dist(P(t), pt)`
+        // * This function has one inflection point when pt is exclusively within the 1st quadrant
+        // (not on an axis, handle that on its own) so the
+
         // * Each step doubles the precision, so for `n` steps,
         // the precision is a quarter of a circle / 2^n
         // * Since the points are further apart at t=0, the worst case
@@ -192,8 +198,8 @@ impl Vec2 {
         // 1/2 ^ prec <= Error(n) <= 1/2 ^ (n-1)
         // * So, `n = prec + 1` works fine
 
-        // for _ in 0..prec.0 + 1 {
-        for _ in 0..3 {
+        for _ in 0..prec.0 + 1 {
+            // for _ in 0..3 {
             let avg = (&a + &b) / IRat::from(2);
             let avg_squared = &avg * &avg;
             let one_plus_avg_squared = IRat::one() + &avg_squared;
@@ -216,11 +222,8 @@ impl Vec2 {
             }
         }
 
-        println!("  {:.10}..{:.10}", a, b);
-        println!("  {:?}..{:?}", a, b);
-        println!("  {:10}..{:10}", a_dist, b_dist);
+        println!("  {}..{}", a, b);
         println!("  {}..{}", a_pt, b_pt);
-        println!("  {:?}..{:?}", a_pt, b_pt);
 
         match b_dist > a_dist {
             true => a_pt,

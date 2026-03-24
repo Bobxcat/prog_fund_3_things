@@ -3,13 +3,13 @@ use std::{
     ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Range, Sub},
 };
 
-use dashu_float::{FBig, round::Round};
+use astro_float::BigFloat;
 use perf_tracer::trace_op;
 use perf_tracer_macros::trace_function;
 
 use crate::{
     derive_binop_by_value, derive_binop_by_value_assymetric,
-    math_things::{Sign, bigint::UBig},
+    math_things::{ASTRO_FLOAT_CONSTS, Sign, bigint::UBig},
 };
 
 #[inline(always)]
@@ -117,25 +117,26 @@ impl IRat {
         s
     }
 
-    pub fn from_fbig<RoundingMode: Round, const BASE: u64>(x: FBig<RoundingMode, BASE>) -> IRat {
-        let (significand, exp) = x.into_repr().into_parts();
-        let (sign, sig_words) = significand.as_sign_words();
+    pub fn from_fbig(x: BigFloat) -> IRat {
+        let mantissa = x.mantissa_digits().unwrap();
+        let exp = x.exponent().unwrap();
+        let sign = x.sign().unwrap();
 
         let mut x = IRat {
             magnitude: URat {
-                num: UBig::from_digits(sig_words.to_vec()),
+                num: UBig::from_digits(mantissa.to_vec()),
                 den: UBig::one(),
             },
             sign: match sign {
-                dashu_base::Sign::Positive => Sign::Pos,
-                dashu_base::Sign::Negative => Sign::Neg,
+                astro_float::Sign::Neg => Sign::Neg,
+                astro_float::Sign::Pos => Sign::Pos,
             },
         };
 
         if exp >= 0 {
-            x.magnitude.num *= &UBig::new(BASE).pow(exp.unsigned_abs() as u64);
+            x.magnitude.num *= &UBig::new(2).pow(exp.unsigned_abs() as u64);
         } else {
-            x.magnitude.den *= &UBig::new(BASE).pow(exp.unsigned_abs() as u64);
+            x.magnitude.den *= &UBig::new(2).pow(exp.unsigned_abs() as u64);
         }
 
         x
@@ -160,19 +161,27 @@ impl IRat {
         }
     }
 
+    /// Returns `self` formatted such as: `-123.456`
+    #[trace_function("IRat::$f")]
+    pub fn format_decimal(&self, prec: Precision) -> String {
+        bigfloat_format_decimal(self.to_fbig(), prec)
+    }
+
     /// Converts `self` into an f64, with possible loss
+    #[trace_function("IRat::$f")]
     pub fn to_f64(&self) -> f64 {
-        // FIXME: Will fail with large fractions that should be representable
-        self.to_fbig().to_f64().value()
+        let s = self.format_decimal(Precision(64));
+        s.parse().unwrap()
     }
 
     /// Converts `self` into a big float, with possible loss
-    pub fn to_fbig(&self) -> FBig {
-        self.magnitude.to_fbig()
-            * match self.sign {
-                Sign::Pos => FBig::ONE,
-                Sign::Neg => FBig::NEG_ONE,
-            }
+    pub fn to_fbig(&self) -> BigFloat {
+        let mut x = self.magnitude.to_fbig();
+        x.set_sign(match self.sign {
+            Sign::Pos => astro_float::Sign::Pos,
+            Sign::Neg => astro_float::Sign::Neg,
+        });
+        x
     }
 
     /// Panics if `self` is zero
@@ -362,11 +371,7 @@ impl std::fmt::Display for URat {
         write!(
             f,
             "{}",
-            self.to_fbig()
-                .with_precision(f.precision().unwrap_or(32))
-                .value()
-                .to_decimal()
-                .value()
+            self.format_decimal(Precision(f.precision().unwrap_or(32)))
         )
     }
 }
@@ -498,6 +503,11 @@ impl URat {
         sqrt_algorithms::sqrt_herons_method(self, prec)
     }
 
+    #[trace_function("URat::$f")]
+    pub fn format_decimal(&self, prec: Precision) -> String {
+        bigfloat_format_decimal(self.to_fbig(), prec)
+    }
+
     /// Discards the sign
     ///
     /// A non-normal `x` will result in `0` being returned
@@ -543,33 +553,21 @@ impl URat {
 
     /// Discards the sign
     #[trace_function("URat::$f")]
-    pub fn from_fbig<RoundingMode: Round, const BASE: u64>(x: FBig<RoundingMode, BASE>) -> URat {
+    pub fn from_fbig(x: BigFloat) -> URat {
         IRat::from_fbig(x).abs_unsigned()
     }
 
     pub fn to_f64(&self) -> f64 {
-        self.to_fbig().to_f64().value()
+        todo!()
     }
 
     /// Converts `self` into a big float, with possible loss
-    pub fn to_fbig(&self) -> FBig {
-        let res = self.num.to_fbig() / self.den.to_fbig();
-        println!(
-            "\nTO_FBIG: {} / {} = {}\n",
+    pub fn to_fbig(&self) -> BigFloat {
+        let res =
             self.num
                 .to_fbig()
-                .with_precision(64)
-                .value()
-                .to_decimal()
-                .value(),
-            self.den
-                .to_fbig()
-                .with_precision(64)
-                .value()
-                .to_decimal()
-                .value(),
-            res.clone().with_precision(64).value().to_decimal().value(),
-        );
+                .div(&self.den.to_fbig(), 1024, astro_float::RoundingMode::None);
+        // println!("\nTO_FBIG: {} / {} = {}\n", self.num, self.den, res,);
         res
     }
 }
@@ -721,7 +719,6 @@ impl Ord for URat {
 }
 
 mod sqrt_algorithms {
-    use dashu_base::SquareRoot;
     use perf_tracer::trace_op;
     use perf_tracer_macros::trace_function;
 
@@ -760,9 +757,54 @@ mod sqrt_algorithms {
     }
 
     pub fn sqrt_through_fbig(s: &URat, prec: Precision) -> URat {
-        let f = s.to_fbig().with_precision(prec.0 + 20).value();
-        URat::from_fbig(f.sqrt())
+        let f = s.to_fbig();
+        URat::from_fbig(f.sqrt(prec.0, astro_float::RoundingMode::Down))
     }
+}
+
+pub fn bigfloat_format_decimal(mut f: BigFloat, prec: Precision) -> String {
+    f.set_precision(prec.0, astro_float::RoundingMode::Down)
+        .unwrap();
+
+    // The mantissa is everything after the period: `0.mmmmm`
+    let (sign, mantissa, exp) = ASTRO_FLOAT_CONSTS
+        .with_borrow_mut(|cc| {
+            f.convert_to_radix(astro_float::Radix::Dec, astro_float::RoundingMode::Down, cc)
+        })
+        .unwrap();
+
+    let mut s = String::new();
+
+    for dig in mantissa {
+        s.push(char::from_digit(dig as u32, 10).unwrap());
+    }
+
+    match exp {
+        ..0 => {
+            // Inserted before the beginning of the string
+            for _ in 0..exp.abs() {
+                s.insert(0, '0');
+            }
+            s.insert_str(0, "0.");
+        }
+        0 => s.insert_str(0, "0."),
+        _ if exp as usize >= s.len() => {
+            while exp as usize > s.len() {
+                s.push('0');
+            }
+            s.insert_str(exp as usize, ".0");
+        }
+        _ => {
+            // Insert at an existing index in the string
+            let comma_idx = exp as usize;
+            s.insert(comma_idx, '.');
+        }
+    }
+
+    if sign.is_negative() {
+        s.insert(0, '-');
+    }
+    s
 }
 
 #[cfg(test)]
@@ -775,14 +817,7 @@ mod tests {
             let num = IRat::from_f64(x).sqrt(Precision(128));
             let should = x.sqrt();
 
-            println!(
-                "sqrt({x}); should={should}; got={num:?}={}",
-                num.to_fbig()
-                    .with_precision(128)
-                    .value()
-                    .to_decimal()
-                    .value()
-            );
+            println!("sqrt({x}); should={should}; got={num:?}={}", num.to_fbig());
         });
     }
 }

@@ -1,10 +1,13 @@
 use std::{
+    cell::RefCell,
     cmp::Reverse,
     collections::HashMap,
     ops::{AddAssign, Neg},
     sync::{LazyLock, Mutex, RwLock},
     time::{Duration, Instant},
 };
+
+use astro_float::Consts;
 
 use crate::math_things::rational::IRat;
 
@@ -15,6 +18,10 @@ pub mod raytracer_2d;
 pub mod raytracer_3d;
 pub mod vec2;
 pub mod vec3;
+
+thread_local! {
+    pub static ASTRO_FLOAT_CONSTS: RefCell<Consts> = RefCell::new(Consts::new().unwrap());
+}
 
 /// Assumes a `impl Op<&ty> for &ty { ... }`
 ///

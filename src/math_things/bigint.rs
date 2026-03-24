@@ -9,7 +9,7 @@ use std::{
     time::Instant,
 };
 
-use dashu_float::{DBig, FBig};
+use astro_float::BigFloat;
 use perf_tracer_macros::trace_function;
 
 use crate::derive_binop_by_value;
@@ -284,9 +284,9 @@ impl UBig {
         n
     }
 
-    pub fn to_fbig(&self) -> FBig {
-        let res = DBig::from_str(&self.to_radix(10)).unwrap();
-        res.to_binary().unwrap()
+    pub fn to_fbig(&self) -> BigFloat {
+        // FIXME: Use from_words instead
+        BigFloat::from_str(&self.to_radix(10)).unwrap()
     }
 
     pub fn digits(&self) -> &[u64] {

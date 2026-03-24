@@ -5,8 +5,8 @@ edition = "2024"
 
 [dependencies]
 criterion = "0.8.2"
-dashu-base = "0.4.1"
-dashu-float = "0.4.3"
+# dashu-base = "0.4.1"
+# dashu-float = "0.4.3"
 fastrand = "2.3.0"
 fxhash = "0.2.1"
 # image = "0.25.10"
@@ -17,6 +17,7 @@ perf_tracer = { path = "perf_tracer" }
 perf_tracer_macros = { path = "perf_tracer_macros" }
 rayon = "1.11.0"
 minifb = "0.28.0"
+astro-float = "0.9.5"
 
 [[bench]]
 name = "eight_queens"
