@@ -1,6 +1,6 @@
 use std::{
     fmt::Display,
-    ops::{Add, Div, Mul, Sub},
+    ops::{Add, Div, Mul, Neg, Sub},
 };
 
 use perf_tracer::trace_op;
@@ -11,6 +11,14 @@ use crate::{
     math_things::rational::{IRat, Precision, URat},
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Quadrant {
+    First,
+    Second,
+    Third,
+    Fourth,
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct Vec2 {
     pub x: IRat,
@@ -19,13 +27,13 @@ pub struct Vec2 {
 
 impl std::fmt::Debug for Vec2 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self}")
+        write!(f, "({:?}, {:?})", self.x, self.y)
     }
 }
 
 impl Display for Vec2 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "({:?}, {:?})", self.x, self.y)
+        write!(f, "({}, {})", self.x, self.y)
     }
 }
 
@@ -57,9 +65,18 @@ impl Vec2 {
     }
 
     /// Returns `(self.x, self.y)` as their float representations
-    #[trace_function("Vec2::to_f64s")]
+    #[trace_function("Vec2::$f")]
     pub fn to_f64s(&self) -> (f64, f64) {
         (self.x.to_f64(), self.y.to_f64())
+    }
+
+    pub fn quadrant(&self) -> Quadrant {
+        match (self.x >= IRat::zero(), self.y >= IRat::zero()) {
+            (true, true) => Quadrant::First,
+            (false, true) => Quadrant::Second,
+            (false, false) => Quadrant::Third,
+            (true, false) => Quadrant::Fourth,
+        }
     }
 
     pub fn dot(&self, other: &Self) -> IRat {
@@ -81,7 +98,7 @@ impl Vec2 {
     }
 
     /// IMPRECISE
-    #[trace_function("Vec2::magnitude")]
+    #[trace_function("Vec2::$f")]
     pub fn magnitude(&self, prec: Precision) -> IRat {
         self.sqr_magnitude().sqrt(prec)
     }
@@ -99,19 +116,19 @@ impl Vec2 {
 
     /// IMPRECISE
     ///
-    /// The returned value will not be normalized.
+    /// The returned value will not be exactly normalized.
     /// If you want an exactly normalized vector without maintaining exact direction, use
-    /// `nearby_normalized`
+    /// `normalize_exact_magnitude`
     #[must_use]
-    #[trace_function("Vec2::normalized")]
-    pub fn normalized(&self, prec: Precision) -> Self {
+    #[trace_function("Vec2::$f")]
+    pub fn normalize_exact_dir(&self, prec: Precision) -> Self {
         self / self.magnitude(prec)
     }
 
     /// Returns this vector reflected across `normal`
     /// * `self` and `normal` should be unit vectors
     #[must_use]
-    #[trace_function("Vec2::reflected")]
+    #[trace_function("Vec2::$f")]
     pub fn reflected(&self, normal: &Self) -> Vec2 {
         // https://en.wikipedia.org/wiki/Specular_reflection#Vector_formulation
         self - IRat::from(2u64) * normal * normal.dot(self)
@@ -120,19 +137,37 @@ impl Vec2 {
     /// Performs `self ^ other`, otherwise known as the 2d wedge product or the perp dot product:
     ///
     /// https://mathworld.wolfram.com/PerpDotProduct.html
-    #[trace_function("Vec2::cross")]
+    #[trace_function("Vec2::$f")]
     pub fn cross(&self, other: &Self) -> IRat {
         &self.x * &other.y - &self.y * &other.x
     }
 
-    /// Finds a point nearby `self` on the unit sphere
-    #[trace_function("Vec2::nearby_normalized")]
-    pub fn nearby_normalized(&self, prec: Precision) -> Vec2 {
-        Self::nearby_normalized_inner(self, prec)
+    /// Finds a point nearby `self` that lies on the unit circle, within `prec` for
+    #[trace_function("Vec2::$f")]
+    pub fn normalize_exact_magnitude(&self, prec: Precision) -> Vec2 {
+        let mut self_reflected = self.clone();
+        if self.x < IRat::zero() {
+            self_reflected.x = self_reflected.x.neg();
+        }
+        if self.y < IRat::zero() {
+            self_reflected.y = self_reflected.y.neg();
+        }
+
+        let mut res = Self::normalize_exact_magnitude_inner(&self_reflected, prec);
+        if self.x < IRat::zero() {
+            res.x = res.x.neg();
+        }
+        if self.y < IRat::zero() {
+            res.y = res.y.neg();
+        }
+
+        debug_assert_eq!(res.sqr_magnitude(), IRat::one());
+        println!("{} -> {}", self, res);
+        res
     }
 
     /// Requires `pt` to be in the first quadrant
-    fn nearby_normalized_inner(pt: &Vec2, prec: Precision) -> Vec2 {
+    fn normalize_exact_magnitude_inner(pt: &Vec2, prec: Precision) -> Vec2 {
         // https://en.wikipedia.org/wiki/Pythagorean_triple#Rational_points_on_a_unit_circle
         // Using the parametric equation, an appropriately accurate value of t can be found
         // for a point P in quadrant 1 by a binary search:
@@ -153,14 +188,39 @@ impl Vec2 {
         // * Since `P(0)=(1,0)`, `dist(P(1/2^n), P(0))` is approximately `P(1/2^n).y`
         // `P(t).y = 2t / (1+t^2)` and near t=0, `P(t).x ~ 2t` so `P(1/2^n).y ~ 1/2^(n-1)`
         // * To conclude, the worst case precision for `n` steps is approximately `1/2 ^ (n-1)`
-        // *
+        // * To find the proper `n` steps for our precision `1/2^prec`, we need a value `n` that satisfies the inequality:
+        // 1/2 ^ prec <= Error(n) <= 1/2 ^ (n-1)
+        // * So, `n = prec + 1` works fine
 
-        for _ in 0..16 {
+        // for _ in 0..prec.0 + 1 {
+        for _ in 0..3 {
+            let avg = (&a + &b) / IRat::from(2);
+            let avg_squared = &avg * &avg;
+            let one_plus_avg_squared = IRat::one() + &avg_squared;
+            let avg_pt = Vec2::new(
+                (IRat::one() - &avg_squared) / &one_plus_avg_squared,
+                (IRat::from(2) * &avg) / &one_plus_avg_squared,
+            );
+            let avg_dist = avg_pt.sqr_dist(pt);
             match b_dist > a_dist {
-                true => todo!(),
-                false => todo!(),
+                true => {
+                    b = avg;
+                    b_pt = avg_pt;
+                    b_dist = avg_dist;
+                }
+                false => {
+                    a = avg;
+                    a_pt = avg_pt;
+                    a_dist = avg_dist;
+                }
             }
         }
+
+        println!("  {:.10}..{:.10}", a, b);
+        println!("  {:?}..{:?}", a, b);
+        println!("  {:10}..{:10}", a_dist, b_dist);
+        println!("  {}..{}", a_pt, b_pt);
+        println!("  {:?}..{:?}", a_pt, b_pt);
 
         match b_dist > a_dist {
             true => a_pt,

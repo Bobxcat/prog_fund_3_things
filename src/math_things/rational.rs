@@ -427,7 +427,7 @@ impl URat {
     /// Panics if the denominator is zero
     #[must_use]
     #[track_caller]
-    #[trace_function("URat::reduced")]
+    #[trace_function("URat::$f")]
     pub fn reduced(&self) -> Self {
         assert!(!self.den.is_zero());
         let divisor = UBig::gcd(self.num.clone(), self.den.clone());
@@ -493,7 +493,7 @@ impl URat {
     }
 
     /// IMPRECISE
-    #[trace_function("URat::sqrt")]
+    #[trace_function("URat::$f")]
     pub fn sqrt(&self, prec: Precision) -> Self {
         sqrt_algorithms::sqrt_herons_method(self, prec)
     }
@@ -501,7 +501,7 @@ impl URat {
     /// Discards the sign
     ///
     /// A non-normal `x` will result in `0` being returned
-    #[trace_function("URat::from_f64")]
+    #[trace_function("URat::$f")]
     pub fn from_f64(x: f64) -> URat {
         match x.classify() {
             // FIXME: Should this panic instead?
@@ -542,7 +542,7 @@ impl URat {
     }
 
     /// Discards the sign
-    #[trace_function("URat::from_fbig")]
+    #[trace_function("URat::$f")]
     pub fn from_fbig<RoundingMode: Round, const BASE: u64>(x: FBig<RoundingMode, BASE>) -> URat {
         IRat::from_fbig(x).abs_unsigned()
     }
@@ -553,7 +553,24 @@ impl URat {
 
     /// Converts `self` into a big float, with possible loss
     pub fn to_fbig(&self) -> FBig {
-        self.num.to_fbig() / self.den.to_fbig()
+        let res = self.num.to_fbig() / self.den.to_fbig();
+        println!(
+            "\nTO_FBIG: {} / {} = {}\n",
+            self.num
+                .to_fbig()
+                .with_precision(64)
+                .value()
+                .to_decimal()
+                .value(),
+            self.den
+                .to_fbig()
+                .with_precision(64)
+                .value()
+                .to_decimal()
+                .value(),
+            res.clone().with_precision(64).value().to_decimal().value(),
+        );
+        res
     }
 }
 
@@ -572,7 +589,7 @@ impl From<u64> for URat {
 impl Add<&URat> for &URat {
     type Output = URat;
 
-    #[trace_function("URat::add")]
+    #[trace_function("URat::$f")]
     fn add(self, rhs: &URat) -> Self::Output {
         // a/b + c/d = (ad + bc) / bd
         let x = trace_op("addition_step", || URat {
@@ -587,7 +604,7 @@ derive_binop_by_value!(URat, Add, add, +);
 impl Sub<&URat> for &URat {
     type Output = URat;
 
-    #[trace_function("URat::sub")]
+    #[trace_function("URat::$f")]
     fn sub(self, rhs: &URat) -> Self::Output {
         // a/b - c/d = (ad - bc) / bd
         URat {
@@ -602,7 +619,7 @@ derive_binop_by_value!(URat, Sub, sub, -);
 impl Mul<&URat> for &URat {
     type Output = URat;
 
-    #[trace_function("URat::mul")]
+    #[trace_function("URat::$f")]
     fn mul(self, rhs: &URat) -> Self::Output {
         URat {
             num: &self.num * &rhs.num,

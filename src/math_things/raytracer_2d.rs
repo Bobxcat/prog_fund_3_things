@@ -197,7 +197,10 @@ impl Scene {
 
         if let Some(intersection) = nearest_intersection {
             let boundary = &self.boundaries[intersection.boundary];
-            let normal_rhs = boundary.placement.normal_rhs();
+            let normal_rhs = boundary
+                .placement
+                .normal_rhs()
+                .normalize_exact_magnitude(PREC);
             let coming_from_lhs = normal_rhs.dot(&ray.dir) >= IRat::zero();
 
             let (leaving_ior, entering_ior, aligned_normal) = match coming_from_lhs {
@@ -205,8 +208,8 @@ impl Scene {
                 false => (&boundary.rhs_ior, &boundary.lhs_ior, normal_rhs),
             };
             let new_dir = intersect2d::refract_ray(
-                &ray.dir.normalized(PREC),
-                &aligned_normal.normalized(PREC),
+                &ray.dir.normalize_exact_magnitude(PREC),
+                &aligned_normal,
                 leaving_ior,
                 entering_ior,
             );
@@ -298,11 +301,12 @@ fn render_scene_inner(scene: &Scene) {
     for ray_idx in 0..ray_ct {
         // let dir = Vec2::new(0.1, (ray_idx as f64 - ray_ct as f64 / 2.) / 100.);
         let angle = 2. * std::f64::consts::PI * ray_idx as f64 / ray_ct as f64;
-        let dir = Vec2::new(angle.cos(), angle.sin());
+        let dir = Vec2::new(angle.cos(), angle.sin()).normalize_exact_magnitude(PREC);
         let mut ray = Ray2 {
             pos: scene.light.clone(),
             dir,
         };
+        continue;
 
         for _ in 0..4 {
             match scene.step_ray(&ray) {
@@ -328,6 +332,4 @@ fn render_scene_inner(scene: &Scene) {
     }
 
     img.save("raytracer_2d_result.png").unwrap();
-
-    print_trace_time(&perf_tracer::PrintOpts::default());
 }

@@ -94,7 +94,7 @@ impl Vec3 {
     /// Returns this vector reflected across `normal`
     /// * `self` and `normal` should be unit vectors
     #[must_use]
-    #[trace_function("Vec3::reflected")]
+    #[trace_function("Vec3::$f")]
     pub fn reflected(&self, normal: &Self) -> Vec3 {
         // https://en.wikipedia.org/wiki/Specular_reflection#Vector_formulation
         self - IRat::from(2u64) * normal * normal.dot(self)

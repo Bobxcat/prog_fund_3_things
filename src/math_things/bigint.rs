@@ -90,7 +90,7 @@ impl UBig {
     }
 
     #[track_caller]
-    #[trace_function("UBig::div_rem")]
+    #[trace_function("UBig::$f")]
     pub fn div_rem(&self, rhs: &Self) -> (UBig, UBig) {
         div_algorithms::div_rem_binary_long(self, rhs)
     }
@@ -257,7 +257,7 @@ impl UBig {
         self.count_ones() == 1
     }
 
-    #[trace_function("UBig::gcd")]
+    #[trace_function("UBig::$f")]
     pub fn gcd(self, other: Self) -> UBig {
         if self.is_zero() && other.is_zero() {
             return UBig::one();
@@ -582,7 +582,7 @@ impl ShrAssign<usize> for UBig {
 impl Mul<&UBig> for &UBig {
     type Output = UBig;
 
-    #[trace_function("UBig::mul")]
+    #[trace_function("UBig::$f")]
     fn mul(self, rhs: &UBig) -> Self::Output {
         mul_algorithms::mul_basic(self, rhs)
     }
@@ -593,7 +593,7 @@ impl Div<&UBig> for &UBig {
     type Output = UBig;
 
     #[inline]
-    #[trace_function("UBig::div")]
+    #[trace_function("UBig::$f")]
     fn div(self, rhs: &UBig) -> Self::Output {
         self.div_rem(rhs).0
     }
@@ -604,7 +604,7 @@ impl Rem<&UBig> for &UBig {
     type Output = UBig;
 
     #[inline]
-    #[trace_function("UBig::rem")]
+    #[trace_function("UBig::$f")]
     fn rem(self, rhs: &UBig) -> Self::Output {
         self.div_rem(rhs).1
     }
