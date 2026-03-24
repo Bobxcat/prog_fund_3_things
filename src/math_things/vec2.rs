@@ -185,7 +185,16 @@ impl Vec2 {
         // * Binary search does not work (only stochastically for cases already near the unit circle):
         // * Fundamentally, the question is of minimizing the function from t=[0,1]: `D(t)=dist(P(t), pt)`
         // * This function has one inflection point when pt is exclusively within the 1st quadrant
-        // (not on an axis, handle that on its own) so the
+        // (not on an axis, handle that on its own) so our solution is the zero of `D'(t)`.
+        // * Unfortunately, D'(t) is not a well-behaved function and any `pt.magnitude() == 1` case will
+        // involve an undefined point, so numerical derivative based methods (i.e. Newton's) won't work.
+        // However, in the cases where `pt.magnitude ~ 1`, the graph of D(t) nearly forms a triangle, and an iteration
+        // of newton's method would give a good initial estimate
+        // Methods of improving guesses:
+        // Try:
+        // * Increase `t` by a step size until the guess starts getting further away,
+        // then decrease the step size and reverse direction. Dividing the step size by 8 or another small power of 2 would be a good choice.
+        // This method is just a binary search that fixes the problem of "missing" the actual minimum
 
         // * Each step doubles the precision, so for `n` steps,
         // the precision is a quarter of a circle / 2^n
