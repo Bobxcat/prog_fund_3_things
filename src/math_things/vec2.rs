@@ -8,7 +8,10 @@ use perf_tracer_macros::trace_function;
 
 use crate::{
     derive_binop_by_value, derive_binop_by_value_assymetric,
-    math_things::rational::{IRat, Precision, URat},
+    math_things::{
+        Sign,
+        rational::{IRat, Precision, URat},
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,18 +171,17 @@ impl Vec2 {
 
     /// Requires `pt` to be in the first quadrant
     fn normalize_exact_magnitude_inner(pt: &Vec2, prec: Precision) -> Vec2 {
+        if pt.y.is_zero() {
+            return Vec2::new(1, 0);
+        }
+        if pt.x.is_zero() {
+            return Vec2::new(0, 1);
+        }
+
         // https://en.wikipedia.org/wiki/Pythagorean_triple#Rational_points_on_a_unit_circle
         // Using the parametric equation, an appropriately accurate value of t can be found
         // for a point P in quadrant 1 by a binary search:
         // Starting with a=0,b=1 perform a->avg(a,b) if b is closer than a, else perform b->avg(a,b)
-
-        let mut a = IRat::zero();
-        let mut a_pt = Vec2::new(1, 0);
-        let mut a_dist = a_pt.sqr_dist(pt);
-
-        let mut b = IRat::one();
-        let mut b_pt = Vec2::new(0, 1);
-        let mut b_dist = b_pt.sqr_dist(pt);
 
         // CORRECTION:
         // * Binary search does not work (only stochastically for cases already near the unit circle):
@@ -207,37 +209,45 @@ impl Vec2 {
         // 1/2 ^ prec <= Error(n) <= 1/2 ^ (n-1)
         // * So, `n = prec + 1` works fine
 
-        for _ in 0..prec.0 + 1 {
-            // for _ in 0..3 {
-            let avg = (&a + &b) / IRat::from(2);
-            let avg_squared = &avg * &avg;
-            let one_plus_avg_squared = IRat::one() + &avg_squared;
-            let avg_pt = Vec2::new(
-                (IRat::one() - &avg_squared) / &one_plus_avg_squared,
-                (IRat::from(2) * &avg) / &one_plus_avg_squared,
+        struct Guess {
+            t: IRat,
+            pt: Vec2,
+            sqr_dist: IRat,
+        }
+
+        let new_guess = |t: IRat| -> Guess {
+            let t_sqr = &t * &t;
+            let one_plus_t_sqr = IRat::one() + &t_sqr;
+            let t_pt = Vec2::new(
+                (IRat::one() - &t_sqr) / &one_plus_t_sqr,
+                (IRat::from(2) * &t) / &one_plus_t_sqr,
             );
-            let avg_dist = avg_pt.sqr_dist(pt);
-            match b_dist > a_dist {
-                true => {
-                    b = avg;
-                    b_pt = avg_pt;
-                    b_dist = avg_dist;
-                }
-                false => {
-                    a = avg;
-                    a_pt = avg_pt;
-                    a_dist = avg_dist;
+            let sqr_dist = t_pt.sqr_dist(pt);
+            Guess {
+                t,
+                pt: t_pt,
+                sqr_dist,
+            }
+        };
+
+        let mut step = IRat::from(URat::new(1u64, 8u64));
+
+        let mut prev = new_guess(IRat::zero());
+
+        for _ in 0..prec.0 + 1 {
+            loop {
+                let next = new_guess(&prev.t + &step);
+
+                if next.sqr_dist > prev.sqr_dist {
+                    step = step * IRat::new(URat::new(1u64, 4u64), Sign::Neg);
+                    break;
+                } else {
+                    prev = next;
                 }
             }
         }
 
-        println!("  {}..{}", a, b);
-        println!("  {}..{}", a_pt, b_pt);
-
-        match b_dist > a_dist {
-            true => a_pt,
-            false => b_pt,
-        }
+        prev.pt
     }
 }
 
