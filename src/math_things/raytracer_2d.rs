@@ -331,5 +331,5 @@ fn render_scene_inner(scene: &Scene) {
         );
     }
 
-    img.save("raytracer_2d_result.png").unwrap();
+    img.save("outputs/raytracer_2d_result.png").unwrap();
 }

@@ -2,7 +2,7 @@ use std::{
     cell::RefCell,
     cmp::Reverse,
     collections::HashMap,
-    fs::File,
+    fs::{self, File},
     ops::AddAssign,
     sync::{LazyLock, Mutex},
     time::{Duration, Instant},
@@ -165,7 +165,7 @@ pub fn print_trace_time(opts: &PrintOpts) {
 
         let mut fg_opts = flamegraph::Options::default();
 
-        let mut file = File::create("perf_tracer_flamegraph.svg").unwrap();
+        let mut file = File::create("outputs/perf_tracer_flamegraph.svg").unwrap();
 
         flamegraph::from_lines(&mut fg_opts, lines.iter().map(|x| x.as_str()), &mut file).unwrap();
     }

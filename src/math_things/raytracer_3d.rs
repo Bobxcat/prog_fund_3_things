@@ -459,5 +459,5 @@ pub fn start(write_to_window: bool) {
         }
     }
 
-    img.save("raytracer_3d_result.png").unwrap();
+    img.save("outputs/raytracer_3d_result.png").unwrap();
 }
