@@ -306,7 +306,6 @@ fn render_scene_inner(scene: &Scene) {
             pos: scene.light.clone(),
             dir,
         };
-        continue;
 
         for _ in 0..4 {
             match scene.step_ray(&ray) {

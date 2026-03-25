@@ -178,6 +178,10 @@ impl Vec2 {
             return Vec2::new(0, 1);
         }
 
+        // FIXME:
+        // Update these comments based on adjusted algorithm,
+        // and justify the number of steps for a given precision (and a given step reduction)
+
         // https://en.wikipedia.org/wiki/Pythagorean_triple#Rational_points_on_a_unit_circle
         // Using the parametric equation, an appropriately accurate value of t can be found
         // for a point P in quadrant 1 by a binary search:
@@ -234,9 +238,10 @@ impl Vec2 {
 
         let mut prev = new_guess(IRat::zero());
 
-        for _ in 0..prec.0 + 1 {
+        for _ in 0..prec.0 / 2 + 1 {
             loop {
-                let next = new_guess(&prev.t + &step);
+                let next_t = &prev.t + &step;
+                let next = new_guess(next_t);
 
                 if next.sqr_dist > prev.sqr_dist {
                     step = step * IRat::new(URat::new(1u64, 4u64), Sign::Neg);
@@ -247,7 +252,8 @@ impl Vec2 {
             }
         }
 
-        prev.pt
+        prev.t.round(prec);
+        new_guess(prev.t).pt
     }
 }
 

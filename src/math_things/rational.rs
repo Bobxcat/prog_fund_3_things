@@ -161,6 +161,10 @@ impl IRat {
         }
     }
 
+    pub fn round(&mut self, prec: Precision) {
+        self.magnitude.round(prec);
+    }
+
     /// Returns `self` formatted such as: `-123.456`
     #[trace_function("IRat::$f")]
     pub fn format_decimal(&self, prec: Precision) -> String {
