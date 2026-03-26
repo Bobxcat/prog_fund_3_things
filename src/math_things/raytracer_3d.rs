@@ -62,7 +62,7 @@ pub struct Intersection3d {
 #[derive(Debug, Clone)]
 pub struct Ray3 {
     pub pos: Vec3,
-    /// Expected to be approximately normalized
+    /// Expected to be exactly normalized (approximate normalization is fine but might accumulate error, which makes me sad)
     pub dir: Vec3,
 }
 
@@ -342,7 +342,8 @@ impl Scene3d {
                         * settings.fov_h,
                     (pixel.0 as f64 - 0.5 * settings.width as f64) / settings.width as f64
                         * settings.fov_w,
-                ),
+                )
+                .normalize_exact_magnitude(Precision(16)),
             };
 
             let final_color: Rgb<u8> = self.cast_ray(ray, 4).into();

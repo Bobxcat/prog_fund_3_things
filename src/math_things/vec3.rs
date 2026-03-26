@@ -114,8 +114,31 @@ impl Vec3 {
         (self - other).sqr_magnitude()
     }
 
+    #[trace_function("Vec3::$f")]
     pub fn normalize_exact_magnitude(&self, prec: Precision) -> Vec3 {
         // FIXME: handle cases with exactly zero coordinates by dispatching to Vec2::normalize_exact_magnitude
+        if self.x.is_zero() {
+            let v = Vec2::new(self.y.clone(), self.z.clone()).normalize_exact_magnitude(prec);
+            return Vec3 {
+                x: IRat::zero(),
+                y: v.x,
+                z: v.y,
+            };
+        } else if self.y.is_zero() {
+            let v = Vec2::new(self.x.clone(), self.z.clone()).normalize_exact_magnitude(prec);
+            return Vec3 {
+                x: v.x,
+                y: IRat::zero(),
+                z: v.y,
+            };
+        } else if self.z.is_zero() {
+            let v = Vec2::new(self.x.clone(), self.y.clone()).normalize_exact_magnitude(prec);
+            return Vec3 {
+                x: v.x,
+                y: v.y,
+                z: IRat::zero(),
+            };
+        }
 
         let mut self_reflected = self.clone();
         if self.x < IRat::zero() {
@@ -128,7 +151,7 @@ impl Vec3 {
             self_reflected.z = self_reflected.z.neg();
         }
 
-        let mut res = Self::normalize_exact_magnitude_inner(&self_reflected, prec);
+        let mut res = normalize_exact_magnitude_algorithms::closed_form(&self_reflected, prec);
         if self.x < IRat::zero() {
             res.x = res.x.neg();
         }
@@ -141,11 +164,35 @@ impl Vec3 {
 
         res
     }
+}
 
-    /// # Requirements
-    /// * `pt.x > 0` and `pt.y > 0`
-    /// * `pt.z < 0`
-    fn normalize_exact_magnitude_inner(pt: &Vec3, prec: Precision) -> Vec3 {
+/// # Requirements
+/// * `pt.x > 0` and `pt.y > 0`
+/// * `pt.z < 0`
+///
+/// Since the input is restricted to the (+x,+y,-z) octant, the output point should be in that octant as well
+mod normalize_exact_magnitude_algorithms {
+    use crate::math_things::{
+        rational::{IRat, Precision},
+        vec2::Vec2,
+        vec3::Vec3,
+    };
+
+    fn stereo_projection(xy: &Vec2) -> Vec3 {
+        let xy_sqr_mag = xy.sqr_magnitude();
+        let den = IRat::one() + &xy_sqr_mag;
+
+        Vec3::new(
+            IRat::from(2) * &xy.x,
+            IRat::from(2) * &xy.y,
+            &xy_sqr_mag - IRat::one(),
+        ) * den.recip()
+    }
+
+    /// See module docs
+    ///
+    /// BUGGED, doesn't work
+    pub fn downhill_simplex_search(pt: &Vec3, prec: Precision) -> Vec3 {
         // Try:
         // * Assume pt is roughly normalized
         // * Find a point on the slice of the sphere with pt.z
@@ -176,15 +223,7 @@ impl Vec3 {
         let make_guess = |xy: Vec2| -> Guess {
             // FIXME: the distance calculation can be vastly simplified as compared to
             // calculating the point then the distance, since the `pt_3d` isn't needed while searching
-            let xy_sqr_mag = xy.sqr_magnitude();
-            let den = IRat::one() + &xy_sqr_mag;
-
-            let pt_3d = Vec3::new(
-                IRat::from(2) * &xy.x,
-                IRat::from(2) * &xy.y,
-                &xy_sqr_mag - IRat::one(),
-            ) * den.recip();
-
+            let pt_3d = stereo_projection(&xy);
             let sqr_dist = pt_3d.sqr_dist(pt);
 
             Guess {
@@ -204,7 +243,7 @@ impl Vec3 {
             [Vec2::new(0, 1), Vec2::new(1, 0), Vec2::new(1, 1)].map(make_guess);
 
         // `prec` is a tolerance of distance, so `prec^2` is a tolerance of sqr_dist
-        let prec_irat = prec.to_urat().powi(2);
+        let prec_tolerance = prec.to_urat().powi(2);
 
         loop {
             // Step 1
@@ -213,7 +252,7 @@ impl Vec3 {
             // FIXME: the termination condition is imprecise
             // Terimation condition:
             // If the distance in quality between the two best points is less than the precision, the guess is within the precision ~ish
-            if (&pts[0].sqr_dist - &pts[1].sqr_dist).abs_unsigned() <= prec_irat {
+            if (&pts[0].sqr_dist - &pts[1].sqr_dist).abs_unsigned() <= prec_tolerance {
                 return pts[0].pt_3d.clone();
             }
 
@@ -262,6 +301,18 @@ impl Vec3 {
                 pts[i] = make_guess(new_xy);
             }
         }
+    }
+
+    pub fn closed_form(pt: &Vec3, prec: Precision) -> Vec3 {
+        let x_sqr = &pt.x * &pt.x;
+        let y_sqr = &pt.y * &pt.y;
+        let x_sqr_plus_y_sqr = &x_sqr + &y_sqr;
+        let num_part = &pt.x * (&x_sqr_plus_y_sqr + &pt.z * &pt.z).sqrt(prec) + &pt.x * &pt.z;
+
+        let x = &num_part / &x_sqr_plus_y_sqr;
+        let y = (&pt.y / &pt.x) * &x;
+
+        stereo_projection(&Vec2::new(x, y))
     }
 }
 
