@@ -156,7 +156,14 @@ impl Vec2 {
             self_reflected.y = self_reflected.y.neg();
         }
 
-        let mut res = Self::normalize_exact_magnitude_inner(&self_reflected, prec);
+        let mut res = if self.y.is_zero() {
+            Vec2::new(1, 0)
+        } else if self.x.is_zero() {
+            Vec2::new(0, 1)
+        } else {
+            // normalize_exact_magnitude_algorithms::search_by_stepping(&self_reflected, prec)
+            normalize_exact_magnitude_algorithms::closed_form_solution(&self_reflected, prec)
+        };
         if self.x < IRat::zero() {
             res.x = res.x.neg();
         }
@@ -165,22 +172,42 @@ impl Vec2 {
         }
 
         debug_assert_eq!(res.sqr_magnitude(), IRat::one());
-        println!("{} -> {}", self, res);
+        // println!("{} -> {}", self, res);
         res
     }
+}
 
-    /// Requires `pt` to be in the first quadrant
-    fn normalize_exact_magnitude_inner(pt: &Vec2, prec: Precision) -> Vec2 {
-        if pt.y.is_zero() {
-            return Vec2::new(1, 0);
-        }
-        if pt.x.is_zero() {
-            return Vec2::new(0, 1);
-        }
+/// Algorithms for calculating `normalize_exact_magnitude` given a point in the first quadrant,
+/// excluding the axes
+mod normalize_exact_magnitude_algorithms {
+    use crate::math_things::{
+        Sign,
+        rational::{IRat, Precision, URat},
+        vec2::Vec2,
+    };
 
+    #[inline(always)]
+    fn pythagorean_triple_pt(t: &IRat) -> Vec2 {
+        let t_sqr = t * t;
+        let one_plus_t_sqr = IRat::one() + &t_sqr;
+        Vec2::new(
+            (IRat::one() - &t_sqr) / &one_plus_t_sqr,
+            (IRat::from(2) * t) / &one_plus_t_sqr,
+        )
+    }
+
+    /// See module docs
+    ///
+    /// Using the parametric form for points on the circle: https://en.wikipedia.org/wiki/Pythagorean_triple#Rational_points_on_a_unit_circle,
+    /// iteratively searches over t in [0, 1]
+    ///
+    /// The distance to the correct answer is halved per step, so this converges linearly
+    pub fn search_by_stepping(pt: &Vec2, prec: Precision) -> Vec2 {
         // FIXME:
         // Update these comments based on adjusted algorithm,
         // and justify the number of steps for a given precision (and a given step reduction)
+        // Also, this could be changed to use f64 or BigFloat for everything, just using a rational point calculation
+        // to return the final result (is it worth it for the performance?)
 
         // https://en.wikipedia.org/wiki/Pythagorean_triple#Rational_points_on_a_unit_circle
         // Using the parametric equation, an appropriately accurate value of t can be found
@@ -220,12 +247,7 @@ impl Vec2 {
         }
 
         let new_guess = |t: IRat| -> Guess {
-            let t_sqr = &t * &t;
-            let one_plus_t_sqr = IRat::one() + &t_sqr;
-            let t_pt = Vec2::new(
-                (IRat::one() - &t_sqr) / &one_plus_t_sqr,
-                (IRat::from(2) * &t) / &one_plus_t_sqr,
-            );
+            let t_pt = pythagorean_triple_pt(&t);
             let sqr_dist = t_pt.sqr_dist(pt);
             Guess {
                 t,
@@ -254,6 +276,20 @@ impl Vec2 {
 
         prev.t.round(prec);
         new_guess(prev.t).pt
+    }
+
+    /// See module docs
+    ///
+    /// Using the parametric form for points on the circle: https://en.wikipedia.org/wiki/Pythagorean_triple#Rational_points_on_a_unit_circle,
+    /// uses a closed form solution to the minimum of the square distance to `pt` over t in 0 to 1
+    ///
+    /// This closed form solution relies on a sqrt operation.
+    /// `search_by_stepping` converges linearly, whereas this method converges at the same speed as `IRat::sqrt`
+    pub fn closed_form_solution(pt: &Vec2, prec: Precision) -> Vec2 {
+        // t = (sqrt(x^2+y^2) - x) / y
+        let sqrt_part = pt.magnitude(prec);
+        let t = (sqrt_part - &pt.x) / &pt.y;
+        pythagorean_triple_pt(&t)
     }
 }
 

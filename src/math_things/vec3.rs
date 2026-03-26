@@ -5,7 +5,13 @@ use std::{
 
 use perf_tracer_macros::trace_function;
 
-use crate::{derive_binop_by_value, derive_binop_by_value_assymetric, math_things::rational::IRat};
+use crate::{
+    derive_binop_by_value, derive_binop_by_value_assymetric,
+    math_things::{
+        rational::{IRat, Precision, URat},
+        vec2::Vec2,
+    },
+};
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct Vec3 {
@@ -102,6 +108,160 @@ impl Vec3 {
 
     pub fn sqr_magnitude(&self) -> IRat {
         self.dot(self)
+    }
+
+    pub fn sqr_dist(&self, other: &Self) -> IRat {
+        (self - other).sqr_magnitude()
+    }
+
+    pub fn normalize_exact_magnitude(&self, prec: Precision) -> Vec3 {
+        // FIXME: handle cases with exactly zero coordinates by dispatching to Vec2::normalize_exact_magnitude
+
+        let mut self_reflected = self.clone();
+        if self.x < IRat::zero() {
+            self_reflected.x = self_reflected.x.neg();
+        }
+        if self.y < IRat::zero() {
+            self_reflected.y = self_reflected.y.neg();
+        }
+        if self.z > IRat::zero() {
+            self_reflected.z = self_reflected.z.neg();
+        }
+
+        let mut res = Self::normalize_exact_magnitude_inner(&self_reflected, prec);
+        if self.x < IRat::zero() {
+            res.x = res.x.neg();
+        }
+        if self.y < IRat::zero() {
+            res.y = res.y.neg();
+        }
+        if self.z > IRat::zero() {
+            res.z = res.z.neg();
+        }
+
+        res
+    }
+
+    /// # Requirements
+    /// * `pt.x > 0` and `pt.y > 0`
+    /// * `pt.z < 0`
+    fn normalize_exact_magnitude_inner(pt: &Vec3, prec: Precision) -> Vec3 {
+        // Try:
+        // * Assume pt is roughly normalized
+        // * Find a point on the slice of the sphere with pt.z
+        // Try:
+        // * https://en.wikipedia.org/wiki/Stereographic_projection#First_formulation
+        // * Use stereographic projection `(X,Y) -> (x,y,z)` with `pt` in the bottom half (X^2 + Y^2 <= 1)
+        // * This turns it into a 2d minimization problem
+        // * It's probably the case that starting at X=0 and finding the minimum along Y, then finding the minimum along X
+        // would return the correct answer (i.e. if (X, a) is a minimum for all x-values along y=a, then (X, b) is a minimum for all y=b)
+        // ^ Unfortunately, this isn't true. But, the R2->R1 distance function is pretty well behaved (in and around the 1st quadrant unit circle)
+        // Try:
+        // * https://en.wikipedia.org/wiki/Nelder%E2%80%93Mead_method
+        // * Downhill simplex method search over the distance function?
+        // Try:
+        // * Gradient-based search, the gradient of sqr distance is known and rational
+        // * Since there's only 1 local minimum, a local minimum search would work
+        // * Coordinate descent might work: https://en.wikipedia.org/wiki/Coordinate_descent
+        // since calculating both coordinates of the gradient is probably ~50% more expensive than just one coordinate
+        // * The distance function is *convex* but it's also quite steep when the point is far away
+
+        // https://en.wikipedia.org/wiki/Nelder%E2%80%93Mead_method#One_possible_variation_of_the_NM_algorithm
+        struct Guess {
+            pt_xy: Vec2,
+            pt_3d: Vec3,
+            sqr_dist: IRat,
+        }
+
+        let make_guess = |xy: Vec2| -> Guess {
+            // FIXME: the distance calculation can be vastly simplified as compared to
+            // calculating the point then the distance, since the `pt_3d` isn't needed while searching
+            let xy_sqr_mag = xy.sqr_magnitude();
+            let den = IRat::one() + &xy_sqr_mag;
+
+            let pt_3d = Vec3::new(
+                IRat::from(2) * &xy.x,
+                IRat::from(2) * &xy.y,
+                &xy_sqr_mag - IRat::one(),
+            ) * den.recip();
+
+            let sqr_dist = pt_3d.sqr_dist(pt);
+
+            Guess {
+                pt_xy: xy,
+                pt_3d,
+                sqr_dist,
+            }
+        };
+
+        let refl_coeff = IRat::one();
+        let expand_coeff = IRat::from(2);
+        let contract_coeff = IRat::from(2).recip();
+        let shrink_coeff = IRat::from(2).recip();
+
+        // We're searching over the XY-plane, a 2d space so we have 3 test points
+        let mut pts: [Guess; 3] =
+            [Vec2::new(0, 1), Vec2::new(1, 0), Vec2::new(1, 1)].map(make_guess);
+
+        // `prec` is a tolerance of distance, so `prec^2` is a tolerance of sqr_dist
+        let prec_irat = prec.to_urat().powi(2);
+
+        loop {
+            // Step 1
+            pts.sort_by(|a, b| a.sqr_dist.cmp(&b.sqr_dist).reverse());
+
+            // FIXME: the termination condition is imprecise
+            // Terimation condition:
+            // If the distance in quality between the two best points is less than the precision, the guess is within the precision ~ish
+            if (&pts[0].sqr_dist - &pts[1].sqr_dist).abs_unsigned() <= prec_irat {
+                return pts[0].pt_3d.clone();
+            }
+
+            // Step 2
+            let x_0 = (&pts[0].pt_xy + &pts[1].pt_xy) / IRat::from(3);
+            // Step 3
+            let x_r = &x_0 - &refl_coeff * (&x_0 - &pts[2].pt_xy);
+            let x_r = make_guess(x_r);
+            if pts[0].sqr_dist <= x_r.sqr_dist && x_r.sqr_dist < pts[1].sqr_dist {
+                pts[2] = x_r;
+                continue;
+            }
+
+            // Step 4
+            if x_r.sqr_dist < pts[0].sqr_dist {
+                let x_e = &x_0 + &expand_coeff * (&x_r.pt_xy - &x_0);
+                let x_e = make_guess(x_e);
+                if x_e.sqr_dist < x_r.sqr_dist {
+                    pts[2] = x_e;
+                } else {
+                    pts[2] = x_r;
+                }
+                continue;
+            }
+
+            // Step 5
+            if x_r.sqr_dist < pts[2].sqr_dist {
+                let x_c = &x_0 + &contract_coeff * (&x_r.pt_xy - &x_0);
+                let x_c = make_guess(x_c);
+                if x_c.sqr_dist < x_r.sqr_dist {
+                    pts[2] = x_c;
+                    continue;
+                }
+            } else {
+                let x_c = &x_0 + &contract_coeff * (&pts[2].pt_xy - &x_0);
+                let x_c = make_guess(x_c);
+                if x_c.sqr_dist < pts[2].sqr_dist {
+                    pts[2] = x_c;
+                    continue;
+                }
+            }
+
+            // Step 6
+            for i in 1..3 {
+                let new_xy = &pts[0].pt_xy + &shrink_coeff * (&pts[i].pt_xy - &pts[0].pt_xy);
+                pts[i] = make_guess(new_xy);
+            }
+        }
     }
 }
 
