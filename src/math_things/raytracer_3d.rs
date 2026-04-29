@@ -396,7 +396,7 @@ pub fn start(write_to_window: bool) {
         .into(),
     };
 
-    let w = 128;
+    let w = 1024;
     let settings = RenderSettings {
         width: w,
         height: w / 2,

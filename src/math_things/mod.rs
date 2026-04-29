@@ -16,6 +16,7 @@ pub mod mat2;
 pub mod rational;
 pub mod raytracer_2d;
 pub mod raytracer_3d;
+pub mod raytracer_3d_float;
 pub mod vec2;
 pub mod vec3;
 
