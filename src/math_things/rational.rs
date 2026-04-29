@@ -438,6 +438,7 @@ impl URat {
     #[track_caller]
     #[trace_function("URat::$f")]
     pub fn reduced(&self) -> Self {
+        // FIXME: This is consistently the slowest part of the program
         assert!(!self.den.is_zero());
         let divisor = UBig::gcd(self.num.clone(), self.den.clone());
         Self {

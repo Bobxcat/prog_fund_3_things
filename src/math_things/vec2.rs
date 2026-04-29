@@ -250,6 +250,7 @@ impl Vec2 {
                     prev = next;
                 }
             }
+            // Rounding here tends to be slower than otherwise
         }
 
         prev.t.round(prec);
